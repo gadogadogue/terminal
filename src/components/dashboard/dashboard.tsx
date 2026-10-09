@@ -11,13 +11,23 @@ import { useWorkspace } from "@/hooks/use-workspace"
 import { seriesColor, type ChartTheme } from "@/lib/chart-palette"
 import { downloadJson } from "@/lib/download"
 import { formatDate } from "@/lib/format"
-import { instrumentCode, instrumentKey, instrumentName, type Instrument, type InstrumentGroup } from "@/lib/instruments"
+import {
+  instrumentCode,
+  instrumentKey,
+  instrumentName,
+  lineDashOf,
+  type Instrument,
+  type InstrumentGroup,
+  type LineDash,
+} from "@/lib/instruments"
 import {
   addInstrument,
   defaultWorkspace,
   MAX_PLOTTED,
   parseWatchlistFile,
   removeInstrument,
+  setLineDash,
+  setSeriesColor,
   togglePlotted,
   toWatchlistFile,
   watchlistFilename,
@@ -41,6 +51,10 @@ export function Dashboard() {
   const fileInput = useRef<HTMLInputElement>(null)
 
   const colorOf = (slot: number) => seriesColor(slot, theme)
+  const slotOwner = (slot: number) => {
+    const item = items.find((i) => i.slot === slot)
+    return item && instrumentCode(item.instrument)
+  }
   const existing = useMemo(
     () => new Set([...workspace.watchlist, ...workspace.benchmarks].map(instrumentKey)),
     [workspace],
@@ -82,6 +96,9 @@ export function Dashboard() {
         description: "Untick one to make room. More lines than that become hard to tell apart.",
       })
   }
+
+  const setColor = (key: string, slot: number) => setWorkspace(setSeriesColor(workspace, key, slot))
+  const setDash = (key: string, dash: LineDash) => setWorkspace(setLineDash(workspace, key, dash))
 
   const remove = (key: string) => {
     const previous = workspace
@@ -130,7 +147,7 @@ export function Dashboard() {
         key: s.key,
         label: labelOf(s.key, item.instrument),
         color: colorOf(item.slot),
-        dashed: item.group === "benchmarks",
+        dash: lineDashOf(item.instrument, item.group),
         points: s.change,
       },
     ]
@@ -141,7 +158,7 @@ export function Dashboard() {
     label: labelOf(item.key, item.instrument),
     code: instrumentCode(item.instrument),
     color: colorOf(item.slot),
-    dashed: item.group === "benchmarks",
+    dash: lineDashOf(item.instrument, item.group),
     metrics: comparison.series.find((s) => s.key === item.key)?.metrics ?? null,
     status: status[item.key] ?? { state: "loading" },
   }))
@@ -236,14 +253,17 @@ export function Dashboard() {
           <InstrumentPanel
             title="Watchlist"
             items={workspace.watchlist}
+            group="watchlist"
             plotted={workspace.plotted}
             colorOf={colorOf}
-            dashed={false}
+            slotOwner={slotOwner}
             baseCurrency={workspace.baseCurrency}
             status={status}
             emptyText="No symbols yet. Add one to start comparing."
             onToggle={toggle}
             onRemove={remove}
+            onColorChange={setColor}
+            onDashChange={setDash}
             action={
               <Button variant="outline" size="sm" onClick={() => setSearchOpen(true)} title="Add a symbol (/)">
                 <PlusIcon data-icon="inline-start" /> Add <Kbd>/</Kbd>
@@ -253,14 +273,17 @@ export function Dashboard() {
           <InstrumentPanel
             title="Benchmarks"
             items={workspace.benchmarks}
+            group="benchmarks"
             plotted={workspace.plotted}
             colorOf={colorOf}
-            dashed
+            slotOwner={slotOwner}
             baseCurrency={workspace.baseCurrency}
             status={status}
             emptyText="No benchmarks. Add a fixed return, gold or a currency."
             onToggle={toggle}
             onRemove={remove}
+            onColorChange={setColor}
+            onDashChange={setDash}
             action={
               <AddBenchmarkMenu
                 existing={existing}

@@ -15,6 +15,7 @@ import {
 import { useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
 import { CHART_CHROME, type ChartTheme } from "@/lib/chart-palette"
+import type { LineDash } from "@/lib/instruments"
 import { formatChange, formatDate } from "@/lib/format"
 import type { PricePoint } from "@/lib/providers/types"
 import { LineKey } from "./line-key"
@@ -23,10 +24,16 @@ export interface ChartLine {
   key: string
   label: string
   color: string
-  /** Benchmarks are dashed so the two groups read apart without color. */
-  dashed: boolean
+  dash: LineDash
   /** Percent change from the common start. */
   points: PricePoint[]
+}
+
+// Plain Dotted is 1px on, 1px off at our 1px width and reads as a faint solid line.
+const LINE_STYLES: Record<LineDash, LineStyle> = {
+  solid: LineStyle.Solid,
+  dashed: LineStyle.Dashed,
+  dotted: LineStyle.SparseDotted,
 }
 
 const axisFormat = (v: number) => `${v > 0 ? "+" : ""}${v.toFixed(Math.abs(v) >= 100 ? 0 : 1)}%`
@@ -58,6 +65,12 @@ function toISO(time: Time | undefined): string | null {
 function resetView(chart: IChartApi) {
   chart.priceScale("right").applyOptions({ autoScale: true })
   chart.timeScale().fitContent()
+}
+
+function samePoints(a: PricePoint[] | undefined, b: PricePoint[]): boolean {
+  if (a === b) return true
+  if (!a || a.length !== b.length) return false
+  return a.every((p, i) => p.time === b[i].time && p.value === b[i].value)
 }
 
 /** Value on `time`, or the latest before it, since holidays differ between markets. */
@@ -93,6 +106,8 @@ export function ComparisonChart({
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef(new Map<string, ISeriesApi<"Line">>())
+  /** Points last handed to each series, to tell data changes from style changes. */
+  const dataRef = useRef(new Map<string, PricePoint[]>())
   const baselineRef = useRef<ISeriesApi<"Line"> | null>(null)
   const themeRef = useRef(theme)
   const [hoverTime, setHoverTime] = useState<string | null>(null)
@@ -100,6 +115,7 @@ export function ComparisonChart({
   useEffect(() => {
     const container = containerRef.current!
     const series = seriesRef.current
+    const data = dataRef.current
     const chart = createChart(container, {
       autoSize: true,
       layout: {
@@ -134,6 +150,7 @@ export function ComparisonChart({
       chartRef.current = null
       baselineRef.current = null
       series.clear()
+      data.clear()
     }
   }, [])
 
@@ -153,11 +170,16 @@ export function ComparisonChart({
     const chart = chartRef.current
     if (!chart || stale) return
     const map = seriesRef.current
+    const data = dataRef.current
     const keep = new Set(lines.map((l) => l.key))
+    // Only new data resets the view; a color or dash change keeps the zoom.
+    let dataChanged = false
     for (const [key, s] of map) {
       if (!keep.has(key)) {
         chart.removeSeries(s)
         map.delete(key)
+        data.delete(key)
+        dataChanged = true
       }
     }
 
@@ -168,7 +190,7 @@ export function ComparisonChart({
     for (const line of lines) {
       const options = {
         color: line.color,
-        lineStyle: line.dashed ? LineStyle.Dashed : LineStyle.Solid,
+        lineStyle: LINE_STYLES[line.dash],
         lastValueVisible,
       }
       let s = map.get(line.key)
@@ -185,13 +207,18 @@ export function ComparisonChart({
       } else {
         s.applyOptions(options)
       }
-      s.setData(line.points.map((p) => ({ time: p.time as Time, value: p.value })))
+      if (!samePoints(data.get(line.key), line.points)) {
+        s.setData(line.points.map((p) => ({ time: p.time as Time, value: p.value })))
+        data.set(line.key, line.points)
+        dataChanged = true
+      }
       if (line.points.length) {
         if (!first || line.points[0].time < first) first = line.points[0].time
         const end = line.points[line.points.length - 1].time
         if (!last || end > last) last = end
       }
     }
+    if (!dataChanged) return
     baselineRef.current?.setData(
       first && last && first !== last
         ? [
@@ -218,7 +245,7 @@ export function ComparisonChart({
       <div className="flex min-h-10 flex-wrap items-start gap-x-5 gap-y-1.5">
         {lines.map((line) => (
           <div key={line.key} className="flex items-center gap-1.5 text-xs">
-            <LineKey color={line.color} dashed={line.dashed} />
+            <LineKey color={line.color} dash={line.dash} />
             <span className="font-medium tabular-nums text-foreground">
               {formatChange(shownTime ? valueAt(line.points, shownTime) : null)}
             </span>

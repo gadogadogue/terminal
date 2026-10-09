@@ -1,7 +1,8 @@
 import { z } from "zod"
-import { instrumentKey, SYMBOL_PATTERN, type Instrument } from "@/lib/instruments"
+import { instrumentKey, LINE_DASHES, SYMBOL_PATTERN, type Instrument } from "@/lib/instruments"
 import { RANGE_KEYS } from "@/lib/ranges"
 import { defaultWorkspace } from "./defaults"
+import { lowestFreeSlot } from "./state"
 import { MAX_PLOTTED, type Workspace } from "./types"
 
 /**
@@ -18,6 +19,10 @@ export const FILE_VERSION = 1
 
 const name = z.string().trim().min(1).max(120).optional()
 const selected = z.boolean().optional()
+/** Palette position while plotted: 1–8 in files, slot 0–7 in the app. */
+const color = z.number().int().min(1).max(MAX_PLOTTED).optional()
+const line = z.enum(LINE_DASHES).optional()
+const extras = { name, selected, color, line }
 const currency = z
   .string()
   .regex(/^[A-Za-z]{3}$/, "Currency must be a 3-letter code like IDR")
@@ -29,9 +34,9 @@ const item = z.union([
     .regex(SYMBOL_PATTERN, "Not a valid symbol")
     .transform((symbol) => ({ kind: "ticker" as const, symbol })),
   z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("ticker"), symbol: z.string().regex(SYMBOL_PATTERN, "Not a valid symbol"), name, selected }),
-    z.object({ kind: z.literal("fixed"), rate: z.number().min(-100).max(1000), name, selected }),
-    z.object({ kind: z.literal("cash"), currency, name, selected }),
+    z.object({ kind: z.literal("ticker"), symbol: z.string().regex(SYMBOL_PATTERN, "Not a valid symbol"), ...extras }),
+    z.object({ kind: z.literal("fixed"), rate: z.number().min(-100).max(1000), ...extras }),
+    z.object({ kind: z.literal("cash"), currency, ...extras }),
   ]),
 ])
 
@@ -71,14 +76,16 @@ export function parseWatchlistFile(input: unknown): Workspace {
 
   const seen = new Set<string>()
   const flagged: string[] = []
+  const colors = new Map<string, number>()
   const take = (items: FileItem[], target: Instrument[]) => {
     for (const entry of items) {
-      const { selected: isSelected, ...inst } = entry as FileItem & { selected?: boolean }
+      const { selected: isSelected, color, ...inst } = entry as FileItem & { selected?: boolean; color?: number }
       const key = instrumentKey(inst)
       if (seen.has(key)) continue
       seen.add(key)
       target.push(inst)
       if (isSelected) flagged.push(key)
+      if (color != null) colors.set(key, color - 1)
     }
   }
   take(file.watchlist, ws.watchlist)
@@ -87,15 +94,23 @@ export function parseWatchlistFile(input: unknown): Workspace {
   else ws.benchmarks = defaults.benchmarks
 
   // Nothing marked as selected: plot the first few of each list.
-  const toPlot = flagged.length
-    ? flagged
-    : [...ws.watchlist.slice(0, 4), ...ws.benchmarks.slice(0, 4)].map(instrumentKey)
-  toPlot.slice(0, MAX_PLOTTED).forEach((key, slot) => (ws.plotted[key] = slot))
+  const toPlot = (
+    flagged.length ? flagged : [...ws.watchlist.slice(0, 4), ...ws.benchmarks.slice(0, 4)].map(instrumentKey)
+  ).slice(0, MAX_PLOTTED)
+  // Colors the file asks for first, then the lowest free ones in list order.
+  for (const key of toPlot) {
+    const slot = colors.get(key)
+    if (slot != null && !Object.values(ws.plotted).includes(slot)) ws.plotted[key] = slot
+  }
+  for (const key of toPlot) if (!(key in ws.plotted)) ws.plotted[key] = lowestFreeSlot(ws.plotted)!
   return ws
 }
 
 export function toWatchlistFile(ws: Workspace): WatchlistFile {
-  const mark = (inst: Instrument) => (instrumentKey(inst) in ws.plotted ? { ...inst, selected: true } : inst)
+  const mark = (inst: Instrument) => {
+    const slot = ws.plotted[instrumentKey(inst)]
+    return slot == null ? inst : { ...inst, selected: true, color: slot + 1 }
+  }
   return {
     format: FILE_FORMAT,
     version: FILE_VERSION,

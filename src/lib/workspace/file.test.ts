@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 import { defaultWorkspace } from "./defaults"
 import { parseWatchlistFile, toWatchlistFile } from "./file"
-import { togglePlotted } from "./state"
+import { setLineDash, setSeriesColor, togglePlotted } from "./state"
 
 describe("watchlist file", () => {
   it("round-trips a workspace", () => {
@@ -51,5 +51,54 @@ describe("plot slots", () => {
     let ws = defaultWorkspace() // 7 plotted
     ws = togglePlotted(ws, "ticker:TLKM.JK").ws
     expect(togglePlotted(ws, "ticker:BTC-USD").ok).toBe(false)
+  })
+})
+
+describe("line style", () => {
+  it("swaps colors with the series already using one", () => {
+    const ws = setSeriesColor(defaultWorkspace(), "ticker:^JKSE", 4)
+    expect(ws.plotted["ticker:^JKSE"]).toBe(4)
+    expect(ws.plotted["ticker:GC=F"]).toBe(0)
+    expect(new Set(Object.values(ws.plotted)).size).toBe(Object.keys(ws.plotted).length)
+  })
+
+  it("takes a free color without moving others, and ignores unplotted series", () => {
+    const before = defaultWorkspace()
+    const ws = setSeriesColor(before, "ticker:^JKSE", 7)
+    expect({ ...ws.plotted, "ticker:^JKSE": 0 }).toEqual(before.plotted)
+    expect(setSeriesColor(before, "ticker:TLKM.JK", 7)).toBe(before)
+  })
+
+  it("stores only dashes that differ from the group default", () => {
+    let ws = setLineDash(defaultWorkspace(), "ticker:BBCA.JK", "dotted")
+    expect(ws.watchlist[1]).toEqual({ kind: "ticker", symbol: "BBCA.JK", name: "Bank Central Asia", line: "dotted" })
+    ws = setLineDash(ws, "ticker:BBCA.JK", "solid")
+    expect(ws.watchlist[1]).not.toHaveProperty("line")
+    ws = setLineDash(ws, "fixed:7", "solid")
+    expect(ws.benchmarks[0]).toEqual({ kind: "fixed", rate: 7, line: "solid" })
+  })
+
+  it("keeps colors and dashes through export and import", () => {
+    let ws = setSeriesColor(defaultWorkspace(), "ticker:^JKSE", 5)
+    ws = setLineDash(ws, "ticker:GC=F", "dotted")
+    const back = parseWatchlistFile(JSON.parse(JSON.stringify(toWatchlistFile(ws))))
+    expect(back.plotted).toEqual(ws.plotted)
+    expect(back.benchmarks).toEqual(ws.benchmarks)
+  })
+
+  it("gives the first claim a duplicate color and fills the rest", () => {
+    const ws = parseWatchlistFile({
+      watchlist: [
+        { kind: "ticker", symbol: "BBCA.JK", selected: true, color: 3 },
+        { kind: "ticker", symbol: "TLKM.JK", selected: true, color: 3 },
+        { kind: "ticker", symbol: "BBRI.JK", selected: true },
+      ],
+    })
+    expect(ws.plotted).toEqual({ "ticker:BBCA.JK": 2, "ticker:TLKM.JK": 0, "ticker:BBRI.JK": 1 })
+  })
+
+  it("rejects colors outside the palette and unknown dashes", () => {
+    expect(() => parseWatchlistFile({ watchlist: [{ kind: "ticker", symbol: "BBCA.JK", color: 9 }] })).toThrow()
+    expect(() => parseWatchlistFile({ watchlist: [{ kind: "ticker", symbol: "BBCA.JK", line: "wavy" }] })).toThrow()
   })
 })

@@ -71,7 +71,10 @@ Exported files look like this (see `examples/watchlist.example.json`):
 | `fixed` | `rate` (percent per year) | A steady line compounding at that rate |
 | `cash` | `currency` (ISO code) | Holding that currency, valued in the base currency |
 
-`selected` marks what is plotted. Hand-written files can be much shorter:
+`selected` marks what is plotted. Any item can also carry `color` (1–8, a
+position in the chart palette, used while plotted) and `line` (`solid`,
+`dashed` or `dotted`); both are optional and set from the line key next to
+each plotted item. Hand-written files can be much shorter:
 `["BBCA.JK", "TLKM.JK"]` is a valid file (benchmarks fall back to the defaults).
 
 ## Market data

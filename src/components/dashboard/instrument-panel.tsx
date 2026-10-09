@@ -15,10 +15,14 @@ import {
   instrumentDescription,
   instrumentKey,
   instrumentName,
+  lineDashOf,
   type Instrument,
+  type InstrumentGroup,
+  type LineDash,
 } from "@/lib/instruments"
 import { cn } from "@/lib/utils"
 import { LineKey } from "./line-key"
+import { LineStylePicker } from "./line-style-picker"
 
 /** Latest price and one-day change, from the shared 1-year history query. */
 function useQuote(instrument: Instrument, baseCurrency: string) {
@@ -72,28 +76,49 @@ function QuoteCell({ instrument, baseCurrency }: { instrument: Instrument; baseC
 function InstrumentRow({
   instrument,
   baseCurrency,
-  color,
-  dashed,
+  slot,
+  dash,
+  colorOf,
+  slotOwner,
   status,
   onToggle,
   onRemove,
+  onColorChange,
+  onDashChange,
 }: {
   instrument: Instrument
   baseCurrency: string
-  color?: string
-  dashed: boolean
+  /** Palette slot while plotted. */
+  slot?: number
+  dash: LineDash
+  colorOf: (slot: number) => string
+  slotOwner: (slot: number) => string | undefined
   status?: SeriesStatus
   onToggle: (key: string) => void
   onRemove: (key: string) => void
+  onColorChange: (key: string, slot: number) => void
+  onDashChange: (key: string, dash: LineDash) => void
 }) {
   const key = instrumentKey(instrument)
   const id = `plot-${key.replace(/[^a-zA-Z0-9-]/g, "_")}`
   const name = instrumentName(instrument)
   return (
     <li className="group/row flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-muted/60">
-      <Checkbox id={id} checked={color != null} onCheckedChange={() => onToggle(key)} />
-      <label htmlFor={id} className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
-        <LineKey color={color} dashed={dashed} className="shrink-0" />
+      <Checkbox id={id} checked={slot != null} onCheckedChange={() => onToggle(key)} />
+      {slot != null ? (
+        <LineStylePicker
+          label={instrumentCode(instrument)}
+          slot={slot}
+          dash={dash}
+          colorOf={colorOf}
+          slotOwner={slotOwner}
+          onColorChange={(s) => onColorChange(key, s)}
+          onDashChange={(d) => onDashChange(key, d)}
+        />
+      ) : (
+        <LineKey className="shrink-0" />
+      )}
+      <label htmlFor={id} className="flex min-w-0 flex-1 cursor-pointer items-center">
         <span className="min-w-0">
           <span className="flex items-center gap-1 truncate text-sm font-medium">
             {instrumentCode(instrument)}
@@ -133,27 +158,34 @@ function RowDescription({ instrument, baseCurrency }: { instrument: Instrument; 
 export function InstrumentPanel({
   title,
   items,
+  group,
   plotted,
   colorOf,
-  dashed,
+  slotOwner,
   baseCurrency,
   status,
   emptyText,
   action,
   onToggle,
   onRemove,
+  onColorChange,
+  onDashChange,
 }: {
   title: string
   items: Instrument[]
+  group: InstrumentGroup
   plotted: Record<string, number>
   colorOf: (slot: number) => string
-  dashed: boolean
+  /** Code of the plotted series using a slot, across both lists. */
+  slotOwner: (slot: number) => string | undefined
   baseCurrency: string
   status: Record<string, SeriesStatus>
   emptyText: string
   action: React.ReactNode
   onToggle: (key: string) => void
   onRemove: (key: string) => void
+  onColorChange: (key: string, slot: number) => void
+  onDashChange: (key: string, dash: LineDash) => void
 }) {
   const plottedCount = items.filter((i) => instrumentKey(i) in plotted).length
   return (
@@ -172,17 +204,20 @@ export function InstrumentPanel({
           <ul className="flex flex-col">
             {items.map((instrument) => {
               const key = instrumentKey(instrument)
-              const slot = plotted[key]
               return (
                 <InstrumentRow
                   key={key}
                   instrument={instrument}
                   baseCurrency={baseCurrency}
-                  color={slot != null ? colorOf(slot) : undefined}
-                  dashed={dashed}
+                  slot={plotted[key]}
+                  dash={lineDashOf(instrument, group)}
+                  colorOf={colorOf}
+                  slotOwner={slotOwner}
                   status={status[key]}
                   onToggle={onToggle}
                   onRemove={onRemove}
+                  onColorChange={onColorChange}
+                  onDashChange={onDashChange}
                 />
               )
             })}
