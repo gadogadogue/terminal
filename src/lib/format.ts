@@ -10,6 +10,38 @@ export function formatPercent(fraction: number | null | undefined): string {
   return fraction == null || !Number.isFinite(fraction) ? "—" : percent.format(fraction)
 }
 
+const shortPercent = new Intl.NumberFormat("en-US", {
+  style: "percent",
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+})
+const signedShortPercent = new Intl.NumberFormat("en-US", {
+  style: "percent",
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+  signDisplay: "exceptZero",
+})
+
+/** One decimal, for dense tables: 0.1534 → "15.3%", or "+15.3%" when signed. */
+export function formatShortPercent(fraction: number | null | undefined, signed = false): string {
+  if (fraction == null || !Number.isFinite(fraction)) return "—"
+  return (signed ? signedShortPercent : shortPercent).format(fraction)
+}
+
+/** A multiple like P/E: two decimals while small, fewer as it grows. */
+export function formatRatio(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—"
+  const digits = Math.abs(value) >= 100 ? 0 : Math.abs(value) >= 10 ? 1 : 2
+  return value.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })
+}
+
+const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 })
+
+/** 743_192_618_074_112 → "743.2T". */
+export function formatAmount(value: number | null | undefined): string {
+  return value == null || !Number.isFinite(value) ? "—" : compact.format(value)
+}
+
 /** A value already in percent units: 12.34 → "+12.34%". */
 export function formatChange(pct: number | null | undefined): string {
   return pct == null || !Number.isFinite(pct) ? "—" : percent.format(pct / 100)

@@ -1,6 +1,8 @@
 "use client"
 
 import { ChartSplineIcon, DownloadIcon, EllipsisIcon, PencilIcon, RotateCcwIcon, UploadIcon } from "lucide-react"
+import Link from "next/link"
+import { usePathname } from "next/navigation"
 import { useState } from "react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
@@ -21,6 +23,36 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { cn } from "@/lib/utils"
+
+const SECTIONS = [
+  { href: "/", label: "Compare" },
+  { href: "/screener", label: "Screener" },
+] as const
+
+function SectionNav() {
+  const pathname = usePathname()
+  return (
+    <nav className="flex shrink-0 items-center gap-0.5 md:ml-3" aria-label="Sections">
+      {SECTIONS.map(({ href, label }) => {
+        const active = pathname === href
+        return (
+          <Button
+            key={href}
+            asChild
+            variant="ghost"
+            size="sm"
+            className={cn(active ? "bg-muted text-foreground" : "text-muted-foreground")}
+          >
+            <Link href={href} aria-current={active ? "page" : undefined}>
+              {label}
+            </Link>
+          </Button>
+        )
+      })}
+    </nav>
+  )
+}
 
 export function TopBar({
   name,
@@ -43,19 +75,20 @@ export function TopBar({
         <span className="flex size-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
           <ChartSplineIcon className="size-4" />
         </span>
-        <span className="font-semibold tracking-tight">Terminal</span>
+        <span className="hidden font-semibold tracking-tight sm:inline">Terminal</span>
       </div>
-      <span className="text-muted-foreground/50" aria-hidden>
+      <span className="hidden text-muted-foreground/50 md:inline" aria-hidden>
         /
       </span>
       <button
         type="button"
         onClick={() => setRenaming(true)}
-        className="min-w-0 truncate rounded-md text-sm text-muted-foreground hover:text-foreground"
+        className="hidden min-w-0 truncate rounded-md text-sm text-muted-foreground hover:text-foreground md:block"
         title="Rename watchlist"
       >
         {name}
       </button>
+      <SectionNav />
 
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
         <Button variant="outline" size="sm" onClick={onImport} title="Open a watchlist file">

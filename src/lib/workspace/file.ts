@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { defaultScreen, isMetricKey, type Screen } from "@/lib/analytics/screener"
 import { instrumentKey, LINE_DASHES, SYMBOL_PATTERN, type Instrument } from "@/lib/instruments"
 import { RANGE_KEYS } from "@/lib/ranges"
 import { defaultWorkspace } from "./defaults"
@@ -40,6 +41,32 @@ const item = z.union([
   ]),
 ])
 
+/**
+ * Screener filters. Percent metrics are fractions (0.12 is 12%), amounts are
+ * plain numbers. Metric names this version doesn't know are skipped, so a
+ * file from a newer version still opens.
+ */
+const screener = z.object({
+  sectors: z.array(z.string().trim().min(1).max(64)).max(50).optional(),
+  filters: z.record(z.string(), z.object({ min: z.number().optional(), max: z.number().optional() })).optional(),
+  sort: z.object({ key: z.string(), dir: z.enum(["asc", "desc"]) }).optional(),
+})
+
+function readScreen(file: z.output<typeof screener> | undefined): Screen {
+  const screen = defaultScreen()
+  if (!file) return screen
+  if (file.sectors) screen.sectors = [...new Set(file.sectors)]
+  for (const [key, { min, max }] of Object.entries(file.filters ?? {})) {
+    if (!isMetricKey(key) || (min == null && max == null)) continue
+    screen.filters[key] = { ...(min != null && { min }), ...(max != null && { max }) }
+  }
+  const sortKey = file.sort?.key
+  if (file.sort && sortKey && (sortKey === "symbol" || isMetricKey(sortKey))) {
+    screen.sort = { key: sortKey, dir: file.sort.dir }
+  }
+  return screen
+}
+
 const fileSchema = z.object({
   format: z.literal(FILE_FORMAT).optional(),
   version: z.number().int().min(1).max(FILE_VERSION, "This file was made by a newer version of the app").optional(),
@@ -53,6 +80,7 @@ const fileSchema = z.object({
     .optional(),
   watchlist: z.array(item).max(500).default([]),
   benchmarks: z.array(item).max(100).optional(),
+  screener: screener.optional(),
 })
 
 type FileItem = z.output<typeof item>
@@ -72,6 +100,7 @@ export function parseWatchlistFile(input: unknown): Workspace {
     watchlist: [],
     benchmarks: [],
     plotted: {},
+    screener: readScreen(file.screener),
   }
 
   const seen = new Set<string>()
@@ -119,6 +148,7 @@ export function toWatchlistFile(ws: Workspace): WatchlistFile {
     settings: { baseCurrency: ws.baseCurrency, range: ws.range },
     watchlist: ws.watchlist.map(mark),
     benchmarks: ws.benchmarks.map(mark),
+    screener: ws.screener,
   }
 }
 

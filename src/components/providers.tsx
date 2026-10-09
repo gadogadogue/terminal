@@ -5,6 +5,7 @@ import { ThemeProvider } from "next-themes"
 import { useState } from "react"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { WorkspaceProvider } from "@/hooks/use-workspace"
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -24,10 +25,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
       <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          {children}
-          <Toaster position="bottom-right" />
-        </TooltipProvider>
+        <WorkspaceProvider>
+          <TooltipProvider>
+            {children}
+            <Toaster position="bottom-right" />
+          </TooltipProvider>
+        </WorkspaceProvider>
       </QueryClientProvider>
     </ThemeProvider>
   )

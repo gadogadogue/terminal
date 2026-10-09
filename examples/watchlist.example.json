@@ -19,5 +19,10 @@
     { "kind": "ticker", "symbol": "GC=F", "name": "Gold", "selected": true },
     { "kind": "cash", "currency": "USD", "selected": true },
     { "kind": "cash", "currency": "IDR", "selected": true }
-  ]
+  ],
+  "screener": {
+    "sectors": [],
+    "filters": { "pbv": { "max": 1.5 }, "roe": { "min": 0.12 }, "valueTraded": { "min": 1000000000 } },
+    "sort": { "key": "pbv", "dir": "asc" }
+  }
 }

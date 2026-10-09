@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
+import { defaultScreen, type Screen } from "@/lib/analytics/screener"
 import { defaultWorkspace } from "./defaults"
 import { parseWatchlistFile, toWatchlistFile } from "./file"
 import { setLineDash, setSeriesColor, togglePlotted } from "./state"
@@ -29,11 +30,44 @@ describe("watchlist file", () => {
     expect(ws.watchlist).toHaveLength(5)
     expect(ws.benchmarks).toHaveLength(5)
     expect(Object.keys(ws.plotted)).toHaveLength(7)
+    expect(ws.screener.filters).toEqual({ pbv: { max: 1.5 }, roe: { min: 0.12 }, valueTraded: { min: 1e9 } })
   })
 
   it("rejects malformed files with a readable message", () => {
     expect(() => parseWatchlistFile({ watchlist: [{ kind: "cash", currency: "rupiah" }] })).toThrow(/3-letter/)
     expect(() => parseWatchlistFile({ version: 99 })).toThrow(/newer version/)
+  })
+})
+
+describe("screener in the file", () => {
+  it("round-trips filters, sectors and sort", () => {
+    const screener: Screen = {
+      sectors: ["Financial Services"],
+      filters: { pbv: { max: 1 }, roe: { min: 0.12 } },
+      sort: { key: "roe", dir: "desc" },
+    }
+    const back = parseWatchlistFile(JSON.parse(JSON.stringify(toWatchlistFile({ ...defaultWorkspace(), screener }))))
+    expect(back.screener).toEqual(screener)
+  })
+
+  it("defaults when a file has no screener section", () => {
+    expect(parseWatchlistFile(["BBCA.JK"]).screener).toEqual(defaultScreen())
+  })
+
+  it("skips metrics and sorts it doesn't know, and empty bounds", () => {
+    const ws = parseWatchlistFile({
+      watchlist: [],
+      screener: {
+        sectors: ["Energy", "Energy"],
+        filters: { pbv: { max: 1.5 }, futureMetric: { min: 2 }, pe: {} },
+        sort: { key: "futureMetric", dir: "desc" },
+      },
+    })
+    expect(ws.screener).toEqual({ ...defaultScreen(), sectors: ["Energy"], filters: { pbv: { max: 1.5 } } })
+  })
+
+  it("rejects bounds that aren't numbers", () => {
+    expect(() => parseWatchlistFile({ screener: { filters: { pbv: { max: "1" } } } })).toThrow()
   })
 })
 

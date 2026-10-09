@@ -1,11 +1,13 @@
-import { normalizeCurrency } from "@/lib/currency"
+import { fxSymbol, normalizeCurrency } from "@/lib/currency"
 import { intervalFor, type FetchRange } from "@/lib/ranges"
 import {
   ProviderError,
   type DataProvider,
+  type MarketSnapshot,
   type PriceHistory,
   type PricePoint,
   type SearchResult,
+  type StockSnapshot,
 } from "./types"
 
 /**
@@ -17,7 +19,12 @@ import {
 
 const CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/"
 const SEARCH_URL = "https://query2.finance.yahoo.com/v1/finance/search"
-const HEADERS = { "User-Agent": "Mozilla/5.0", Accept: "application/json" }
+const SCREENER_URL = "https://query2.finance.yahoo.com/v1/finance/screener"
+const CRUMB_URL = "https://query2.finance.yahoo.com/v1/test/getcrumb"
+/** Answers 404, but sets the cookie that the screener's crumb is tied to. */
+const COOKIE_URL = "https://fc.yahoo.com/"
+const USER_AGENT = "Mozilla/5.0"
+const HEADERS = { "User-Agent": USER_AGENT, Accept: "application/json" }
 
 /**
  * IDX is the home market. Its codes are four letters, and Yahoo search only
@@ -26,6 +33,28 @@ const HEADERS = { "User-Agent": "Mozilla/5.0", Accept: "application/json" }
 const HOME_SUFFIX = ".JK"
 const HOME_EXCHANGE = "JKT"
 const HOME_CODE = /^[A-Za-z]{4}$/
+const HOME_REGION = "id"
+const HOME_MARKET = "IDX"
+
+/**
+ * Screener quotes don't say which sector a stock is in, so the screener
+ * fetches the market one sector at a time.
+ */
+const SECTORS = [
+  "Basic Materials",
+  "Communication Services",
+  "Consumer Cyclical",
+  "Consumer Defensive",
+  "Energy",
+  "Financial Services",
+  "Healthcare",
+  "Industrials",
+  "Real Estate",
+  "Technology",
+  "Utilities",
+]
+/** The largest page the screener serves. */
+const SCREEN_PAGE = 250
 
 const SEARCHABLE_TYPES = new Set([
   "EQUITY",
@@ -73,6 +102,40 @@ interface SearchResponse {
   }>
 }
 
+interface ScreenerQuote {
+  symbol: string
+  shortName?: string
+  longName?: string
+  currency?: string
+  /** The currency of the accounts, which `bookValue` is in. */
+  financialCurrency?: string
+  regularMarketPrice?: number
+  regularMarketChangePercent?: number
+  regularMarketTime?: number
+  marketCap?: number
+  bookValue?: number
+  epsTrailingTwelveMonths?: number
+  epsForward?: number
+  dividendRate?: number
+  dividendYield?: number
+  fiftyTwoWeekHigh?: number
+  fiftyTwoWeekLow?: number
+  /** In percent, unlike the fractions in the other `…ChangePercent` fields. */
+  fiftyTwoWeekChangePercent?: number
+  averageDailyVolume3Month?: number
+}
+
+interface ScreenerResponse {
+  finance: {
+    result: Array<{ total: number; quotes: ScreenerQuote[] }> | null
+    error: { code: string; description: string } | null
+  }
+}
+
+type Operand = { operator: string; operands: unknown[] }
+
+const eq = (field: string, value: string): Operand => ({ operator: "eq", operands: [field, value] })
+
 const dateFormatters = new Map<string, Intl.DateTimeFormat>()
 
 /** Formats a unix timestamp as the calendar date in the exchange's timezone. */
@@ -90,13 +153,16 @@ function localDate(timestampSec: number, timeZone: string): string {
   return `${parts.year}-${parts.month}-${parts.day}`
 }
 
-async function getJson<T>(url: string): Promise<T> {
-  let res: Response
+async function reach(url: string, init: RequestInit): Promise<Response> {
   try {
-    res = await fetch(url, { headers: HEADERS })
+    return await fetch(url, init)
   } catch {
     throw new ProviderError("Could not reach Yahoo Finance")
   }
+}
+
+async function getJson<T>(url: string): Promise<T> {
+  const res = await reach(url, { headers: HEADERS })
   if (res.status === 429) throw new ProviderError("Yahoo Finance rate limit reached, try again shortly", 429)
   // The chart endpoint answers unknown symbols with 404 and a JSON body.
   if (!res.ok && res.status !== 404) throw new ProviderError(`Yahoo Finance responded ${res.status}`)
@@ -173,9 +239,182 @@ async function search(query: string): Promise<SearchResult[]> {
     }))
 }
 
+type Session = { cookie: string; crumb: string }
+
+let session: Promise<Session> | null = null
+
+async function openSession(): Promise<Session> {
+  const res = await reach(COOKIE_URL, { headers: { "User-Agent": USER_AGENT }, redirect: "manual" })
+  const cookie = res.headers
+    .getSetCookie()
+    .map((c) => c.split(";")[0])
+    .join("; ")
+  // No Accept header: the crumb endpoint answers application/json with 406.
+  const crumbRes = await reach(CRUMB_URL, { headers: { "User-Agent": USER_AGENT, Cookie: cookie } })
+  const crumb = (await crumbRes.text()).trim()
+  if (!cookie || !crumbRes.ok || !crumb || crumb.startsWith("{")) {
+    throw new ProviderError("Yahoo Finance did not open a screener session")
+  }
+  return { cookie, crumb }
+}
+
+/**
+ * The screener wants a cookie plus a matching "crumb". They last for hours,
+ * so one session is shared; passing the session that failed replaces it,
+ * once, however many requests saw it fail.
+ */
+function yahooSession(failed?: Promise<Session>): Promise<Session> {
+  if (!session || session === failed) {
+    const pending = openSession()
+    session = pending
+    pending.catch(() => {
+      if (session === pending) session = null
+    })
+  }
+  return session
+}
+
+async function screenPage(
+  operands: Operand[],
+  offset: number,
+  size = SCREEN_PAGE,
+  retried = false,
+): Promise<{ total: number; quotes: ScreenerQuote[] }> {
+  const current = yahooSession()
+  const { cookie, crumb } = await current
+  const res = await reach(`${SCREENER_URL}?${new URLSearchParams({ crumb, formatted: "false" })}`, {
+    method: "POST",
+    headers: { ...HEADERS, Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      offset,
+      size,
+      // A stable order, so pages fetched in parallel never overlap.
+      sortField: "ticker",
+      sortType: "ASC",
+      quoteType: "EQUITY",
+      query: { operator: "AND", operands },
+    }),
+  })
+  if (res.status === 401 && !retried) {
+    yahooSession(current)
+    return screenPage(operands, offset, size, true)
+  }
+  if (res.status === 429) throw new ProviderError("Yahoo Finance rate limit reached, try again shortly", 429)
+  if (!res.ok) throw new ProviderError(`Yahoo Finance screener responded ${res.status}`)
+  const data = (await res.json()) as ScreenerResponse
+  const result = data.finance.result?.[0]
+  if (!result) throw new ProviderError(data.finance.error?.description ?? "Yahoo Finance screener returned nothing")
+  return { total: result.total, quotes: result.quotes }
+}
+
+async function screenAll(operands: Operand[]): Promise<ScreenerQuote[]> {
+  const first = await screenPage(operands, 0)
+  const offsets: number[] = []
+  for (let offset = SCREEN_PAGE; offset < first.total; offset += SCREEN_PAGE) offsets.push(offset)
+  const rest = await Promise.all(offsets.map((offset) => screenPage(operands, offset)))
+  return [first, ...rest].flatMap((page) => page.quotes)
+}
+
+/** Latest close of each FX pair; pairs that fail to load are left out. */
+async function latestRates(symbols: string[]): Promise<Map<string, number>> {
+  const rates = new Map<string, number>()
+  await Promise.all(
+    symbols.map(async (symbol) => {
+      try {
+        const { points } = await history(symbol, "1y")
+        rates.set(symbol, points[points.length - 1].value)
+      } catch {
+        // Book values in that currency stay unknown rather than wrong.
+      }
+    }),
+  )
+  return rates
+}
+
+const finite = (value: number | undefined) => (value != null && Number.isFinite(value) ? value : null)
+
+/** Every IDX company is a "Tbk" (publicly listed), so the suffix says nothing. */
+const LISTED_SUFFIX = /[\s,]+Tbk\.?$/i
+
+function toStock(quote: ScreenerQuote, sector: string | null, rates: Map<string, number>): StockSnapshot {
+  const { currency, divisor } = normalizeCurrency(quote.currency)
+  const reporting = normalizeCurrency(quote.financialCurrency ?? quote.currency)
+  const perShare = (value: number | undefined) => {
+    const v = finite(value)
+    return v == null ? null : v / divisor
+  }
+  // Yahoo states book value in the reporting currency and everything else
+  // in the trading currency, so its own priceToBook is off by the FX rate
+  // for companies that report in USD.
+  const converted = reporting.currency !== currency
+  const rate = converted ? rates.get(fxSymbol(reporting.currency, currency)) : 1
+  const book = finite(quote.bookValue)
+  const changePct = finite(quote.regularMarketChangePercent)
+  const change52wPct = finite(quote.fiftyTwoWeekChangePercent)
+  return {
+    symbol: quote.symbol,
+    name: (quote.shortName ?? quote.longName ?? quote.symbol).replace(LISTED_SUFFIX, ""),
+    sector,
+    currency,
+    ...(converted && { reportingCurrency: reporting.currency }),
+    price: quote.regularMarketPrice! / divisor,
+    change: changePct == null ? null : changePct / 100,
+    marketCap: finite(quote.marketCap),
+    bookValue: book == null || rate == null ? null : (book / reporting.divisor) * rate,
+    eps: perShare(quote.epsTrailingTwelveMonths),
+    epsForward: perShare(quote.epsForward),
+    // Non-payers have no rate, only a zero yield.
+    dividendRate: perShare(quote.dividendRate) ?? (quote.dividendYield === 0 ? 0 : null),
+    high52w: perShare(quote.fiftyTwoWeekHigh),
+    low52w: perShare(quote.fiftyTwoWeekLow),
+    change52w: change52wPct == null ? null : change52wPct / 100,
+    avgVolume: finite(quote.averageDailyVolume3Month),
+  }
+}
+
+async function screen(): Promise<MarketSnapshot> {
+  const region = eq("region", HOME_REGION)
+  const [everything, ...bySector] = await Promise.all([
+    screenPage([region], 0, 1),
+    ...SECTORS.map((sector) => screenAll([region, eq("sector", sector)])),
+  ])
+
+  const found = new Map<string, { quote: ScreenerQuote; sector: string | null }>()
+  bySector.forEach((quotes, i) => {
+    for (const quote of quotes) found.set(quote.symbol, { quote, sector: SECTORS[i] })
+  })
+  // New listings can lack a sector; pick up whatever the sector pass missed.
+  if (found.size < everything.total) {
+    for (const quote of await screenAll([region])) {
+      if (!found.has(quote.symbol)) found.set(quote.symbol, { quote, sector: null })
+    }
+  }
+
+  const listed = [...found.values()].filter(({ quote }) => (finite(quote.regularMarketPrice) ?? 0) > 0)
+  if (listed.length === 0) throw new ProviderError("Yahoo Finance returned no stocks for the screener")
+
+  const pairs = new Set<string>()
+  for (const { quote } of listed) {
+    const trading = normalizeCurrency(quote.currency).currency
+    const reporting = normalizeCurrency(quote.financialCurrency ?? quote.currency).currency
+    if (reporting !== trading) pairs.add(fxSymbol(reporting, trading))
+  }
+  const rates = await latestRates([...pairs])
+
+  const stocks = listed.map(({ quote, sector }) => toStock(quote, sector, rates))
+  const latest = Math.max(...listed.map(({ quote }) => quote.regularMarketTime ?? 0))
+  return {
+    market: HOME_MARKET,
+    currency: stocks[0].currency,
+    asOf: new Date((latest || Date.now() / 1000) * 1000).toISOString(),
+    stocks,
+  }
+}
+
 export const yahooProvider: DataProvider = {
   id: "yahoo",
   name: "Yahoo Finance",
   history,
   search,
+  screen,
 }

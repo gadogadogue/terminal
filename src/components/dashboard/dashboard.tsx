@@ -2,14 +2,14 @@
 
 import { Loader2Icon, PlusIcon } from "lucide-react"
 import { useTheme } from "next-themes"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
+import { AppShell } from "@/components/app-shell"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { useComparison } from "@/hooks/use-comparison"
 import { useWorkspace } from "@/hooks/use-workspace"
 import { seriesColor, type ChartTheme } from "@/lib/chart-palette"
-import { downloadJson } from "@/lib/download"
 import { formatDate } from "@/lib/format"
 import {
   instrumentCode,
@@ -22,15 +22,11 @@ import {
 } from "@/lib/instruments"
 import {
   addInstrument,
-  defaultWorkspace,
   MAX_PLOTTED,
-  parseWatchlistFile,
   removeInstrument,
   setLineDash,
   setSeriesColor,
   togglePlotted,
-  toWatchlistFile,
-  watchlistFilename,
 } from "@/lib/workspace"
 import { AddBenchmarkMenu } from "./add-benchmark-menu"
 import { ComparisonChart, type ChartLine } from "./comparison-chart"
@@ -39,7 +35,6 @@ import { InstrumentPanel } from "./instrument-panel"
 import { Kbd } from "./kbd"
 import { MetricsTable, type MetricsRow } from "./metrics-table"
 import { SymbolSearchDialog } from "./symbol-search-dialog"
-import { TopBar } from "./top-bar"
 
 export function Dashboard() {
   const [workspace, setWorkspace] = useWorkspace()
@@ -48,7 +43,6 @@ export function Dashboard() {
   const { items, comparison, names, status, updating } = useComparison(workspace)
   const [searchOpen, setSearchOpen] = useState(false)
   const [viewKey, setViewKey] = useState(0)
-  const fileInput = useRef<HTMLInputElement>(null)
 
   const colorOf = (slot: number) => seriesColor(slot, theme)
   const slotOwner = (slot: number) => {
@@ -109,34 +103,6 @@ export function Dashboard() {
     })
   }
 
-  const importFile = async (file: File) => {
-    try {
-      const next = parseWatchlistFile(JSON.parse(await file.text()))
-      const previous = workspace
-      setWorkspace(next)
-      toast.success(`Imported ${next.name}`, {
-        description: `${next.watchlist.length} watchlist items, ${next.benchmarks.length} benchmarks`,
-        action: { label: "Undo", onClick: () => setWorkspace(previous) },
-      })
-    } catch (err) {
-      toast.error("Could not import that file", {
-        description: err instanceof SyntaxError ? "It is not valid JSON." : (err as Error).message,
-      })
-    }
-  }
-
-  const exportFile = () => {
-    const filename = watchlistFilename(workspace)
-    downloadJson(filename, toWatchlistFile(workspace))
-    toast.success(`Saved ${filename}`, { description: "Import it any time to restore this watchlist." })
-  }
-
-  const reset = () => {
-    const previous = workspace
-    setWorkspace(defaultWorkspace())
-    toast("Reset to the sample watchlist", { action: { label: "Undo", onClick: () => setWorkspace(previous) } })
-  }
-
   const labelOf = (key: string, instrument: Instrument) => instrumentName(instrument, names[key])
 
   const lines: ChartLine[] = comparison.series.flatMap((s) => {
@@ -168,35 +134,7 @@ export function Dashboard() {
   const stale = updating && lines.length > 0
 
   return (
-    <div
-      className="flex min-h-screen flex-col"
-      onDragOver={(e) => e.dataTransfer.types.includes("Files") && e.preventDefault()}
-      onDrop={(e) => {
-        const file = e.dataTransfer.files[0]
-        if (!file) return
-        e.preventDefault()
-        void importFile(file)
-      }}
-    >
-      <TopBar
-        name={workspace.name}
-        onImport={() => fileInput.current?.click()}
-        onExport={exportFile}
-        onRename={(name) => setWorkspace({ ...workspace, name })}
-        onReset={reset}
-      />
-      <input
-        ref={fileInput}
-        type="file"
-        accept=".json,application/json"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0]
-          if (file) void importFile(file)
-          e.target.value = ""
-        }}
-      />
-
+    <AppShell workspace={workspace} onWorkspaceChange={setWorkspace}>
       <main className="mx-auto grid w-full max-w-[1440px] flex-1 gap-6 px-4 pt-2 pb-10 lg:grid-cols-[minmax(0,1fr)_360px] lg:px-6">
         <section className="flex min-w-0 flex-col gap-4">
           <FilterBar
@@ -299,21 +237,12 @@ export function Dashboard() {
         </aside>
       </main>
 
-      <footer className="mx-auto w-full max-w-[1440px] px-4 pb-6 text-xs text-muted-foreground lg:px-6">
-        Prices from Yahoo Finance through an unofficial endpoint; they may be delayed or incomplete. For research,
-        not investment advice. Charts by{" "}
-        <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer" className="underline underline-offset-2">
-          TradingView
-        </a>
-        .
-      </footer>
-
       <SymbolSearchDialog
         open={searchOpen}
         onOpenChange={setSearchOpen}
         title="Add to watchlist"
         onSelect={(instrument) => add("watchlist", instrument)}
       />
-    </div>
+    </AppShell>
   )
 }

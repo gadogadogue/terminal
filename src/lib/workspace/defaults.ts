@@ -1,3 +1,4 @@
+import { defaultScreen } from "@/lib/analytics/screener"
 import type { Workspace } from "./types"
 
 /** First-run sample: Indonesian and US markets against common benchmarks. */
@@ -29,5 +30,6 @@ export function defaultWorkspace(): Workspace {
       "cash:USD": 5,
       "cash:IDR": 6,
     },
+    screener: defaultScreen(),
   }
 }

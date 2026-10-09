@@ -1,7 +1,7 @@
 "use client"
 
 import { queryOptions } from "@tanstack/react-query"
-import type { PriceHistory, SearchResult } from "@/lib/providers/types"
+import type { MarketSnapshot, PriceHistory, SearchResult } from "@/lib/providers/types"
 import type { FetchRange } from "@/lib/ranges"
 
 async function getJson<T>(url: string): Promise<T> {
@@ -27,5 +27,12 @@ export function searchQuery(q: string) {
     queryFn: () => getJson<SearchResult[]>(`/api/search?${new URLSearchParams({ q })}`),
     enabled: q.trim().length > 0,
     staleTime: 24 * 60 * 60_000,
+  })
+}
+
+export function screenerQuery() {
+  return queryOptions({
+    queryKey: ["screener"] as const,
+    queryFn: () => getJson<MarketSnapshot>("/api/screener"),
   })
 }

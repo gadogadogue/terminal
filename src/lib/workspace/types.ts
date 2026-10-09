@@ -1,3 +1,4 @@
+import type { Screen } from "@/lib/analytics/screener"
 import type { Instrument, InstrumentGroup } from "@/lib/instruments"
 import type { RangeKey } from "@/lib/ranges"
 
@@ -13,6 +14,8 @@ export interface Workspace {
    * an instrument while it stays plotted, so toggling others never repaints it.
    */
   plotted: Record<string, number>
+  /** The screener's filters and sort. */
+  screener: Screen
 }
 
 export interface PlottedItem {
