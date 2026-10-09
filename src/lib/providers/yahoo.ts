@@ -19,6 +19,14 @@ const CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/"
 const SEARCH_URL = "https://query2.finance.yahoo.com/v1/finance/search"
 const HEADERS = { "User-Agent": "Mozilla/5.0", Accept: "application/json" }
 
+/**
+ * IDX is the home market. Its codes are four letters, and Yahoo search only
+ * finds them with the suffix: "SMAR" returns US names, "SMAR.JK" the stock.
+ */
+const HOME_SUFFIX = ".JK"
+const HOME_EXCHANGE = "JKT"
+const HOME_CODE = /^[A-Za-z]{4}$/
+
 const SEARCHABLE_TYPES = new Set([
   "EQUITY",
   "ETF",
@@ -57,6 +65,7 @@ interface SearchResponse {
     symbol: string
     shortname?: string
     longname?: string
+    exchange?: string
     exchDisp?: string
     typeDisp?: string
     quoteType?: string
@@ -132,7 +141,7 @@ async function history(symbol: string, range: FetchRange): Promise<PriceHistory>
   }
 }
 
-async function search(query: string): Promise<SearchResult[]> {
+async function searchQuotes(query: string): Promise<NonNullable<SearchResponse["quotes"]>> {
   const params = new URLSearchParams({
     q: query,
     quotesCount: "12",
@@ -141,8 +150,21 @@ async function search(query: string): Promise<SearchResult[]> {
     enableFuzzyQuery: "false",
   })
   const data = await getJson<SearchResponse>(`${SEARCH_URL}?${params}`)
-  return (data.quotes ?? [])
-    .filter((q) => q.symbol && q.isYahooFinance !== false && SEARCHABLE_TYPES.has(q.quoteType ?? ""))
+  return data.quotes ?? []
+}
+
+async function search(query: string): Promise<SearchResult[]> {
+  const queries = HOME_CODE.test(query) ? [query, `${query.toUpperCase()}${HOME_SUFFIX}`] : [query]
+  const quotes = (await Promise.all(queries.map(searchQuotes))).flat()
+  const seen = new Set<string>()
+  return quotes
+    .filter((q) => {
+      if (!q.symbol || seen.has(q.symbol)) return false
+      seen.add(q.symbol)
+      return q.isYahooFinance !== false && SEARCHABLE_TYPES.has(q.quoteType ?? "")
+    })
+    // Stable sort: home-market listings first, otherwise Yahoo's ranking.
+    .sort((a, b) => Number(b.exchange === HOME_EXCHANGE) - Number(a.exchange === HOME_EXCHANGE))
     .map((q) => ({
       symbol: q.symbol,
       name: q.longname ?? q.shortname ?? q.symbol,
