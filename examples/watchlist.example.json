@@ -1,0 +1,23 @@
+{
+  "format": "finance-terminal/watchlist",
+  "version": 1,
+  "name": "Example watchlist",
+  "settings": {
+    "baseCurrency": "IDR",
+    "range": "5Y"
+  },
+  "watchlist": [
+    { "kind": "ticker", "symbol": "^JKSE", "name": "IDX Composite", "selected": true },
+    { "kind": "ticker", "symbol": "BBCA.JK", "name": "Bank Central Asia", "selected": true },
+    { "kind": "ticker", "symbol": "TLKM.JK", "name": "Telkom Indonesia" },
+    { "kind": "ticker", "symbol": "VOO", "name": "Vanguard S&P 500 ETF", "selected": true },
+    "BTC-USD"
+  ],
+  "benchmarks": [
+    { "kind": "fixed", "rate": 7, "selected": true },
+    { "kind": "fixed", "rate": 4.5, "name": "Deposit 4.5%" },
+    { "kind": "ticker", "symbol": "GC=F", "name": "Gold", "selected": true },
+    { "kind": "cash", "currency": "USD", "selected": true },
+    { "kind": "cash", "currency": "IDR", "selected": true }
+  ]
+}
