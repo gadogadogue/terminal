@@ -1,4 +1,4 @@
-import { instrumentKey, type Instrument, type InstrumentGroup } from "@/lib/instruments"
+import { defaultLineDash, instrumentKey, type Instrument, type InstrumentGroup, type LineDash } from "@/lib/instruments"
 import { MAX_PLOTTED, type PlottedItem, type Workspace } from "./types"
 
 /** Pure state transitions. The React hook wraps these. */
@@ -49,6 +49,31 @@ export function togglePlotted(ws: Workspace, key: string): { ws: Workspace; ok: 
   const slot = lowestFreeSlot(ws.plotted)
   if (slot == null) return { ws, ok: false }
   return { ws: { ...ws, plotted: { ...ws.plotted, [key]: slot } }, ok: true }
+}
+
+/**
+ * Gives a plotted series another palette color. A series already using that
+ * color takes over the old one, so plotted colors stay distinct.
+ */
+export function setSeriesColor(ws: Workspace, key: string, slot: number): Workspace {
+  const current = ws.plotted[key]
+  if (current == null || current === slot || slot < 0 || slot >= MAX_PLOTTED) return ws
+  const plotted = { ...ws.plotted, [key]: slot }
+  const holder = Object.keys(ws.plotted).find((k) => ws.plotted[k] === slot)
+  if (holder) plotted[holder] = current
+  return { ...ws, plotted }
+}
+
+/** Sets how a series is drawn. The group default is stored as unset. */
+export function setLineDash(ws: Workspace, key: string, dash: LineDash): Workspace {
+  const update = (group: InstrumentGroup) =>
+    ws[group].map((inst) => {
+      if (instrumentKey(inst) !== key) return inst
+      const next: Instrument = { ...inst, line: dash }
+      if (dash === defaultLineDash(group)) delete next.line
+      return next
+    })
+  return { ...ws, watchlist: update("watchlist"), benchmarks: update("benchmarks") }
 }
 
 /** Plotted instruments in list order: watchlist first, then benchmarks. */

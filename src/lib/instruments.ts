@@ -5,16 +5,35 @@
  * - ticker: a market symbol from the data provider (BBCA.JK, GC=F, ^GSPC)
  * - fixed:  a synthetic investment compounding at `rate` % per year
  * - cash:   holding a currency; flat in its own currency, FX-driven otherwise
+ *
+ * `line` overrides how the series is drawn (see `lineDashOf`).
  */
 export type Instrument =
-  | { kind: "ticker"; symbol: string; name?: string }
-  | { kind: "fixed"; rate: number; name?: string }
-  | { kind: "cash"; currency: string; name?: string }
+  | { kind: "ticker"; symbol: string; name?: string; line?: LineDash }
+  | { kind: "fixed"; rate: number; name?: string; line?: LineDash }
+  | { kind: "cash"; currency: string; name?: string; line?: LineDash }
 
 export type InstrumentGroup = "watchlist" | "benchmarks"
 
+export const LINE_DASHES = ["solid", "dashed", "dotted"] as const
+export type LineDash = (typeof LINE_DASHES)[number]
+
+/** Benchmarks default to dashed so the two groups read apart without color. */
+export function defaultLineDash(group: InstrumentGroup): LineDash {
+  return group === "benchmarks" ? "dashed" : "solid"
+}
+
+export function lineDashOf(inst: Instrument, group: InstrumentGroup): LineDash {
+  return inst.line ?? defaultLineDash(group)
+}
+
 /** Symbols are passed straight to upstream URLs, so keep them conservative. */
 export const SYMBOL_PATTERN = /^[A-Za-z0-9.\-=^_]{1,24}$/
+
+/** A stock's P/BV chart. The symbol rides in the URL so any page can link to it. */
+export function valuationHref(symbol: string): string {
+  return `/valuation?${new URLSearchParams({ symbol })}`
+}
 
 /** Stable identity, also used to de-duplicate lists. */
 export function instrumentKey(inst: Instrument): string {

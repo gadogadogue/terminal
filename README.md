@@ -1,13 +1,23 @@
 # Terminal
 
-An open-source terminal for investment research. The first module compares
-your picks against simple benchmarks, all on one chart, in one currency,
-from one start date:
+An open-source terminal for investment research, in three parts.
+
+**Compare** puts your picks against simple benchmarks, all on one chart, in
+one currency, from one start date:
 
 - a **fixed annual return** (default 7%, or any rate you set)
 - **gold** (COMEX futures)
 - **holding a currency** (USD, IDR, …)
 - any index, ETF, stock, FX pair or crypto
+
+**Screener** lists every IDX stock with its valuation, so you can find ideas
+by P/BV, ROE, P/E, dividend yield, size and liquidity, then add the ones you
+like to the watchlist and compare them.
+
+**Valuation** answers one question about a stock's P/BV: did it move because
+of the price or because of book value? It plots price, book value per share
+and P/BV as percent change from one start date, or as values in the stock's
+currency with P/BV underneath, and splits the move between the two.
 
 There is **no database and no account**. Your watchlist lives in your browser
 and you keep it as a plain JSON file: export it, store it anywhere, import it
@@ -23,6 +33,12 @@ and you keep it as a plain JSON file: export it, store it anywhere, import it
 - Total return (dividends and splits included where the source has them),
   CAGR, annualized volatility and max drawdown per series
 - Symbol search across exchanges, including IDX (`.JK`)
+- A screener over the whole IDX: min/max filters on nine metrics, sectors,
+  sortable columns, and presets (below book, cheap & profitable, Graham,
+  high yield) as starting points
+- A P/BV chart per stock (click any P/BV in the screener): price, book value
+  per share and the ratio on one start date, with the share of the move that
+  came from each
 - Light and dark themes
 
 ## Getting started
@@ -71,7 +87,25 @@ Exported files look like this (see `examples/watchlist.example.json`):
 | `fixed` | `rate` (percent per year) | A steady line compounding at that rate |
 | `cash` | `currency` (ISO code) | Holding that currency, valued in the base currency |
 
-`selected` marks what is plotted. Hand-written files can be much shorter:
+The optional `screener` section saves the screener's filters:
+
+```json
+"screener": {
+  "sectors": ["Financial Services"],
+  "filters": { "pbv": { "max": 1 }, "roe": { "min": 0.12 }, "valueTraded": { "min": 1000000000 } },
+  "sort": { "key": "pbv", "dir": "asc" }
+}
+```
+
+Filter keys are `pbv`, `roe`, `pe`, `forwardPe`, `dividendYield`,
+`marketCap`, `valueTraded`, `change52w` and `fromHigh`. Percentages are
+fractions (`0.12` is 12%) and amounts are in IDR. Keys an older version
+doesn't know are ignored.
+
+`selected` marks what is plotted. Any item can also carry `color` (1–8, a
+position in the chart palette, used while plotted) and `line` (`solid`,
+`dashed` or `dotted`); both are optional and set from the line key next to
+each plotted item. Hand-written files can be much shorter:
 `["BBCA.JK", "TLKM.JK"]` is a valid file (benchmarks fall back to the defaults).
 
 ## Market data
@@ -82,6 +116,23 @@ broad coverage (IDX stocks as `BBCA.JK`, the IDX Composite as `^JKSE`, FX as
 change or rate-limit without notice. Responses are cached on the server for
 an hour, and every request goes through a small provider interface so the
 source can be swapped.
+
+The screener uses Yahoo's **screener endpoint**, which needs a session
+cookie and a "crumb" token that the server fetches and reuses. It pulls the
+IDX one sector at a time (about a dozen requests, cached for an hour) to
+know each stock's sector. Yahoo reports book value in the company's
+reporting currency but prices in IDR, so its own P/BV is wrong for companies
+that report in USD; the screener converts their book value at the latest
+USD/IDR rate and computes every ratio itself.
+
+The valuation chart uses Yahoo's **fundamentals endpoint** for balance
+sheets: equity and shares outstanding at about four year-ends and the latest
+five quarters (a quarter is sometimes missing), cached for a day. Book value
+per share is equity over shares, held flat from one balance-sheet date to
+the next; share counts arrive restated for splits, so it lines up with
+split-adjusted prices. Unlike Compare, this chart uses closes without
+dividends, since P/BV is about the price a share trades at. Book value in
+another currency is converted at each day's rate.
 
 **Why not TradingView data?** TradingView has no public data API, and
 scraping its feeds breaks its terms of use, which is a non-starter for an
@@ -108,6 +159,8 @@ browser check.
 
 1. Implement `DataProvider` from `src/lib/providers/types.ts` (`history` and
    `search`), returning dates as `YYYY-MM-DD` in the exchange's timezone.
+   `screen` is optional; without it the screener page reports that the
+   source has no screener.
 2. Register it in `src/lib/providers/index.ts`.
 3. Select it with the `DATA_PROVIDER` environment variable.
 
@@ -115,12 +168,13 @@ browser check.
 
 ```
 src/
-  app/api/history, app/api/search   Server routes that proxy and cache the provider
+  app/api/history, search, screener Server routes that proxy and cache the provider
   lib/providers/                    Data sources (Yahoo today)
-  lib/analytics/                    Currency conversion, alignment, metrics (pure, tested)
+  lib/analytics/                    Currency conversion, alignment, metrics, screener math (pure, tested)
   lib/workspace/                    Watchlist state and the file format
   hooks/                            Data fetching and browser persistence
   components/dashboard/             The comparison dashboard
+  components/screener/              The screener
 ```
 
 UI work follows `DESIGN.md` (monochrome shadcn/ui chrome, Geist type, color
@@ -137,6 +191,13 @@ only inside the data).
 - **CAGR** is shown for periods of about a year or longer. **Volatility** is
   the annualized standard deviation of log returns. **Max drawdown** is the
   worst fall from a previous high.
+- **Screener ratios** come from per-share figures: P/BV is price over book
+  value per share, P/E is price over trailing 12-month EPS, and ROE is that
+  EPS over book value. A ratio over zero or negative book value or earnings is
+  left empty rather than shown negative, so "P/BV ≤ 1" never matches a company
+  with negative equity. **Div yield** is Yahoo's expected annual dividend over
+  price (the latest payment annualized). **Value/day** is the 3-month average
+  volume times price.
 
 ## Disclaimer
 

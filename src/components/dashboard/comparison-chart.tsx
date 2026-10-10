@@ -15,6 +15,7 @@ import {
 import { useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
 import { CHART_CHROME, type ChartTheme } from "@/lib/chart-palette"
+import type { LineDash } from "@/lib/instruments"
 import { formatChange, formatDate } from "@/lib/format"
 import type { PricePoint } from "@/lib/providers/types"
 import { LineKey } from "./line-key"
@@ -23,13 +24,37 @@ export interface ChartLine {
   key: string
   label: string
   color: string
-  /** Benchmarks are dashed so the two groups read apart without color. */
-  dashed: boolean
-  /** Percent change from the common start. */
+  dash: LineDash
+  /** Plotted values: percent change from the common start, unless `format` says otherwise. */
   points: PricePoint[]
+  /** Prints a plotted value that isn't a percent change, on the axis and in the legend. */
+  format?: (value: number | null) => string
+  /** Lines in a unit of their own go in a pane below the main one (0, the default). */
+  pane?: number
+  /** A second reading of the line, printed after its label in the legend. */
+  detail?: { points: PricePoint[]; format: (value: number | null) => string }
+}
+
+// Plain Dotted is 1px on, 1px off at our 1px width and reads as a faint solid line.
+const LINE_STYLES: Record<LineDash, LineStyle> = {
+  solid: LineStyle.Solid,
+  dashed: LineStyle.Dashed,
+  dotted: LineStyle.SparseDotted,
 }
 
 const axisFormat = (v: number) => `${v > 0 ? "+" : ""}${v.toFixed(Math.abs(v) >= 100 ? 0 : 1)}%`
+
+/**
+ * Formats are set per series, not chart-wide, so panes can differ. A pane's
+ * axis takes the format of its first series.
+ */
+const priceFormat = (format: (value: number) => string = axisFormat) => ({
+  type: "custom" as const,
+  formatter: format,
+  minMove: 0.01,
+})
+
+const paneOf = (line: ChartLine) => line.pane ?? 0
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
@@ -56,8 +81,14 @@ function toISO(time: Time | undefined): string | null {
  * price axis turns auto-scaling off for good, so a reset must turn it back on.
  */
 function resetView(chart: IChartApi) {
-  chart.priceScale("right").applyOptions({ autoScale: true })
+  chart.panes().forEach((_, pane) => chart.priceScale("right", pane).applyOptions({ autoScale: true }))
   chart.timeScale().fitContent()
+}
+
+function samePoints(a: PricePoint[] | undefined, b: PricePoint[]): boolean {
+  if (a === b) return true
+  if (!a || a.length !== b.length) return false
+  return a.every((p, i) => p.time === b[i].time && p.value === b[i].value)
 }
 
 /** Value on `time`, or the latest before it, since holidays differ between markets. */
@@ -93,6 +124,8 @@ export function ComparisonChart({
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef(new Map<string, ISeriesApi<"Line">>())
+  /** Points last handed to each series, to tell data changes from style changes. */
+  const dataRef = useRef(new Map<string, PricePoint[]>())
   const baselineRef = useRef<ISeriesApi<"Line"> | null>(null)
   const themeRef = useRef(theme)
   const [hoverTime, setHoverTime] = useState<string | null>(null)
@@ -100,6 +133,7 @@ export function ComparisonChart({
   useEffect(() => {
     const container = containerRef.current!
     const series = seriesRef.current
+    const data = dataRef.current
     const chart = createChart(container, {
       autoSize: true,
       layout: {
@@ -115,7 +149,7 @@ export function ComparisonChart({
         vertLine: { width: 1, style: LineStyle.Solid },
         horzLine: { visible: false, labelVisible: false },
       },
-      localization: { priceFormatter: axisFormat, dateFormat: "dd MMM yyyy" },
+      localization: { dateFormat: "dd MMM yyyy" },
     })
     chartRef.current = chart
     // A hairline at 0% so gains and losses read against the starting point.
@@ -124,6 +158,7 @@ export function ComparisonChart({
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
+      priceFormat: priceFormat(),
     })
 
     const onMove = (param: MouseEventParams<Time>) => setHoverTime(param.point ? toISO(param.time) : null)
@@ -134,6 +169,7 @@ export function ComparisonChart({
       chartRef.current = null
       baselineRef.current = null
       series.clear()
+      data.clear()
     }
   }, [])
 
@@ -141,7 +177,7 @@ export function ComparisonChart({
     themeRef.current = theme
     const c = CHART_CHROME[theme]
     chartRef.current?.applyOptions({
-      layout: { textColor: c.text },
+      layout: { textColor: c.text, panes: { separatorColor: c.grid, separatorHoverColor: c.grid } },
       grid: { horzLines: { color: c.grid } },
       crosshair: { vertLine: { color: c.crosshair, labelBackgroundColor: theme === "dark" ? "#404040" : "#0a0a0a" } },
     })
@@ -153,11 +189,16 @@ export function ComparisonChart({
     const chart = chartRef.current
     if (!chart || stale) return
     const map = seriesRef.current
+    const data = dataRef.current
     const keep = new Set(lines.map((l) => l.key))
+    // Only new data resets the view; a color or dash change keeps the zoom.
+    let dataChanged = false
     for (const [key, s] of map) {
       if (!keep.has(key)) {
         chart.removeSeries(s)
         map.delete(key)
+        data.delete(key)
+        dataChanged = true
       }
     }
 
@@ -165,35 +206,59 @@ export function ComparisonChart({
     const lastValueVisible = lines.length <= 4
     let first: string | null = null
     let last: string | null = null
+    let paneAdded = false
     for (const line of lines) {
       const options = {
         color: line.color,
-        lineStyle: line.dashed ? LineStyle.Dashed : LineStyle.Solid,
+        lineStyle: LINE_STYLES[line.dash],
         lastValueVisible,
+        priceFormat: priceFormat(line.format),
       }
+      const pane = paneOf(line)
+      paneAdded ||= pane >= chart.panes().length
       let s = map.get(line.key)
       if (!s) {
-        s = chart.addSeries(LineSeries, {
-          ...options,
-          lineWidth: 1,
-          priceLineVisible: false,
-          crosshairMarkerRadius: 4,
-          crosshairMarkerBorderWidth: 2,
-          crosshairMarkerBorderColor: CHART_CHROME[themeRef.current].surface,
-        })
+        s = chart.addSeries(
+          LineSeries,
+          {
+            ...options,
+            lineWidth: 1,
+            priceLineVisible: false,
+            crosshairMarkerRadius: 4,
+            crosshairMarkerBorderWidth: 2,
+            crosshairMarkerBorderColor: CHART_CHROME[themeRef.current].surface,
+          },
+          pane,
+        )
         map.set(line.key, s)
       } else {
         s.applyOptions(options)
+        // A pane left empty removes itself.
+        if (s.getPane().paneIndex() !== pane) {
+          s.moveToPane(pane)
+          dataChanged = true
+        }
       }
-      s.setData(line.points.map((p) => ({ time: p.time as Time, value: p.value })))
+      if (!samePoints(data.get(line.key), line.points)) {
+        s.setData(line.points.map((p) => ({ time: p.time as Time, value: p.value })))
+        data.set(line.key, line.points)
+        dataChanged = true
+      }
       if (line.points.length) {
         if (!first || line.points[0].time < first) first = line.points[0].time
         const end = line.points[line.points.length - 1].time
         if (!last || end > last) last = end
       }
     }
+    // An extra pane is a second reading; the main one keeps most of the height.
+    if (paneAdded) chart.panes()[0].setStretchFactor(2)
+    // The hairline is the main pane's first series, so it sets that axis's format.
+    const main = lines.find((l) => paneOf(l) === 0)
+    baselineRef.current?.applyOptions({ priceFormat: priceFormat(main?.format) })
+    if (!dataChanged) return
     baselineRef.current?.setData(
-      first && last && first !== last
+      // There is no 0% to mark unless the main pane plots percent change.
+      !main?.format && first && last && first !== last
         ? [
             { time: first as Time, value: 0 },
             { time: last as Time, value: 0 },
@@ -218,13 +283,18 @@ export function ComparisonChart({
       <div className="flex min-h-10 flex-wrap items-start gap-x-5 gap-y-1.5">
         {lines.map((line) => (
           <div key={line.key} className="flex items-center gap-1.5 text-xs">
-            <LineKey color={line.color} dashed={line.dashed} />
+            <LineKey color={line.color} dash={line.dash} />
             <span className="font-medium tabular-nums text-foreground">
-              {formatChange(shownTime ? valueAt(line.points, shownTime) : null)}
+              {(line.format ?? formatChange)(shownTime ? valueAt(line.points, shownTime) : null)}
             </span>
             <span className="max-w-56 truncate text-muted-foreground" title={line.label}>
               {line.label}
             </span>
+            {line.detail && (
+              <span className="tabular-nums text-foreground">
+                {line.detail.format(shownTime ? valueAt(line.detail.points, shownTime) : null)}
+              </span>
+            )}
           </div>
         ))}
         {shownTime && (
@@ -234,7 +304,7 @@ export function ComparisonChart({
       <div
         ref={containerRef}
         role="img"
-        aria-label={`Percent change of ${lines.length} series; values are listed in the table below.`}
+        aria-label={`${lines.some((l) => l.format) ? "Values" : "Percent change"} of ${lines.length} series; values are listed in the table below.`}
         className={cn("h-[360px] w-full transition-opacity sm:h-[420px]", stale && "opacity-50")}
       />
     </div>

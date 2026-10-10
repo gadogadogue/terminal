@@ -9,7 +9,7 @@ const geist = Geist({
 })
 
 export const metadata: Metadata = {
-  title: "Terminal",
+  title: { default: "Terminal", template: "%s · Terminal" },
   description: "Compare investments against benchmarks like a fixed 7% return, gold and cash.",
 }
 

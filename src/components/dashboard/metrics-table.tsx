@@ -5,6 +5,7 @@ import { useState } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { SeriesStatus } from "@/hooks/use-comparison"
 import type { Metrics } from "@/lib/analytics/series"
+import type { LineDash } from "@/lib/instruments"
 import { formatPercent, signClass } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { LineKey } from "./line-key"
@@ -14,7 +15,7 @@ export interface MetricsRow {
   label: string
   code: string
   color: string
-  dashed: boolean
+  dash: LineDash
   metrics: Metrics | null
   status: SeriesStatus
 }
@@ -87,7 +88,7 @@ export function MetricsTable({ rows, stale }: { rows: MetricsRow[]; stale: boole
           <TableRow key={row.key}>
             <TableCell className="max-w-64 pl-4">
               <div className="flex items-center gap-2">
-                <LineKey color={row.color} dashed={row.dashed} className="shrink-0" />
+                <LineKey color={row.color} dash={row.dash} className="shrink-0" />
                 <span className="truncate font-medium">{row.label}</span>
                 {row.label !== row.code && (
                   <span className="hidden truncate text-xs text-muted-foreground sm:inline">{row.code}</span>

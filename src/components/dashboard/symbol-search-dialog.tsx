@@ -25,16 +25,20 @@ export function SymbolSearchDialog({
   open,
   onOpenChange,
   title,
+  stocksOnly = false,
   onSelect,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   title: string
+  /** Leave out funds, indices, FX and crypto, for pages that need a company. */
+  stocksOnly?: boolean
   onSelect: (instrument: Instrument) => void
 }) {
   const [query, setQuery] = useState("")
   const debounced = useDebouncedValue(query.trim(), 250)
-  const { data, isFetching, error } = useQuery(searchQuery(debounced))
+  const { data: found, isFetching, error } = useQuery(searchQuery(debounced))
+  const data = stocksOnly ? found?.filter((r) => r.type?.toLowerCase() === "equity") : found
   const typed = query.trim().toUpperCase()
   // Offer the raw symbol only once results have settled, so it never steals
   // the highlighted row (and the Enter key) from a real match.
@@ -53,7 +57,7 @@ export function SymbolSearchDialog({
       {/* Results are already ranked by the provider; skip client-side filtering. */}
       <Command shouldFilter={false}>
         <CommandInput
-          placeholder="Search stocks, funds, indices, FX, crypto…"
+          placeholder={stocksOnly ? "Search stocks…" : "Search stocks, funds, indices, FX, crypto…"}
           value={query}
           onValueChange={setQuery}
         />
@@ -64,8 +68,9 @@ export function SymbolSearchDialog({
           {error && <div className="px-3 py-6 text-center text-sm text-muted-foreground">{error.message}</div>}
           {!debounced && (
             <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-              Try “BBCA”, “gold”, “S&amp;P 500” or a ticker like <span className="font-medium text-foreground">AAPL</span>.
-              IDX stocks end in <span className="font-medium text-foreground">.JK</span>.
+              Try “BBCA”, {stocksOnly ? "“Telkom”" : <>“gold”, “S&amp;P 500”</>} or a ticker like{" "}
+              <span className="font-medium text-foreground">AAPL</span>. IDX stocks end in{" "}
+              <span className="font-medium text-foreground">.JK</span>.
             </div>
           )}
           {data && data.length > 0 && (
@@ -88,8 +93,8 @@ export function SymbolSearchDialog({
           {canAddTyped && (
             <CommandGroup heading="Exact symbol">
               <CommandItem value={`__typed:${typed}`} onSelect={() => choose({ kind: "ticker", symbol: typed })}>
-                <PlusIcon />
-                Add <span className="font-medium">{typed}</span> as typed
+                {!stocksOnly && <PlusIcon />}
+                {stocksOnly ? "Use" : "Add"} <span className="font-medium">{typed}</span> as typed
               </CommandItem>
             </CommandGroup>
           )}
