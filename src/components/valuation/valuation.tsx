@@ -10,12 +10,12 @@ import { ComparisonChart, type ChartLine } from "@/components/dashboard/comparis
 import { Kbd } from "@/components/dashboard/kbd"
 import { SymbolSearchDialog } from "@/components/dashboard/symbol-search-dialog"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useValuation } from "@/hooks/use-valuation"
 import { useWorkspace } from "@/hooks/use-workspace"
 import { seriesColor, type ChartTheme } from "@/lib/chart-palette"
-import { formatDate, formatPrice, formatRatio } from "@/lib/format"
+import { formatChange, formatDate, formatPrice, formatRatio } from "@/lib/format"
 import { SYMBOL_PATTERN, valuationHref } from "@/lib/instruments"
 import { RANGE_KEYS, type RangeKey } from "@/lib/ranges"
 import { cn } from "@/lib/utils"
@@ -33,6 +33,8 @@ export function Valuation() {
   const theme: ChartTheme = resolvedTheme === "dark" ? "dark" : "light"
   const router = useRouter()
   const [range, setRange] = useState<RangeKey>("5Y")
+  /** Percent change from the start, or the values themselves. */
+  const [view, setView] = useState<"change" | "value">("change")
   const [viewKey, setViewKey] = useState(0)
   const [searchOpen, setSearchOpen] = useState(false)
 
@@ -70,14 +72,15 @@ export function Valuation() {
         { key: "pbv", label: "P/BV", data: valuation.pbv, format: formatRatio, effect: valuation.attribution.pbv },
       ]
     : []
-  const lines: ChartLine[] = series.map((s, slot) => ({
-    key: s.key,
-    label: s.label,
-    color: seriesColor(slot, theme),
-    dash: "solid",
-    points: s.data.change,
-    level: { points: s.data.levels, format: s.format },
-  }))
+  const lines: ChartLine[] = series.map((s, slot) => {
+    const line = { key: s.key, label: s.label, color: seriesColor(slot, theme), dash: "solid" as const }
+    const change = { points: s.data.change, format: formatChange }
+    const value = { points: s.data.levels, format: s.format }
+    return view === "change"
+      ? { ...line, points: change.points, detail: value }
+      : // Price and book value share the currency axis; P/BV is a multiple, so it gets a pane.
+        { ...line, ...value, pane: s.key === "pbv" ? 1 : 0, detail: change }
+  })
   const rows: DriverRow[] = series.map((s, slot) => {
     const { levels } = s.data
     const first = levels[0].value
@@ -98,7 +101,7 @@ export function Valuation() {
     : loading
       ? null
       : error
-        ? `${error.message}. P/BV needs a company with published accounts.`
+        ? error.message
         : valuation
           ? null
           : negativeEquity
@@ -147,12 +150,32 @@ export function Valuation() {
                 )}
               </CardTitle>
               <CardDescription className="text-xs">
-                {valuation
-                  ? `Change in price, book value per share and P/BV since ${formatDate(valuation.start)} · ${currency}`
-                  : "Price, book value per share and P/BV from one start date"}
+                {!valuation
+                  ? "Price, book value per share and P/BV from one start date"
+                  : view === "change"
+                    ? `Change in price, book value per share and P/BV since ${formatDate(valuation.start)}`
+                    : `Price and book value per share in ${currency}, P/BV below, since ${formatDate(valuation.start)}`}
                 {valuation?.limitedBy === "book" && <> · as far back as the balance sheets go</>}
                 {valuation?.limitedBy === "price" && <> · starts when the price history begins</>}
               </CardDescription>
+              <CardAction>
+                <ToggleGroup
+                  type="single"
+                  variant="outline"
+                  size="sm"
+                  spacing={0}
+                  value={view}
+                  onValueChange={(value) => value && setView(value as typeof view)}
+                  aria-label="Show as"
+                >
+                  <ToggleGroupItem value="change" className="px-2.5 text-xs" title="Percent change from the start date">
+                    %
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="value" className="px-2.5 text-xs" title={`Price and book value in ${currency ?? "the trading currency"}`}>
+                    {currency ?? "Value"}
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </CardAction>
             </CardHeader>
             <CardContent className="relative">
               <ComparisonChart lines={lines} theme={theme} stale={false} viewKey={viewKey} />

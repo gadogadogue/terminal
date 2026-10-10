@@ -16,8 +16,8 @@ like to the watchlist and compare them.
 
 **Valuation** answers one question about a stock's P/BV: did it move because
 of the price or because of book value? It plots price, book value per share
-and P/BV as percent change from one start date, and splits the move between
-the two.
+and P/BV as percent change from one start date, or as values in the stock's
+currency with P/BV underneath, and splits the move between the two.
 
 There is **no database and no account**. Your watchlist lives in your browser
 and you keep it as a plain JSON file: export it, store it anywhere, import it
