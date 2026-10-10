@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils"
 const SECTIONS = [
   { href: "/", label: "Compare" },
   { href: "/screener", label: "Screener" },
+  { href: "/valuation", label: "Valuation" },
 ] as const
 
 function SectionNav() {

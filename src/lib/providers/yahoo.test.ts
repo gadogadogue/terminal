@@ -192,3 +192,75 @@ describe("yahoo screener", () => {
     expect(calls.crumbs).toBe(2)
   })
 })
+
+describe("yahoo history", () => {
+  it("keeps dividends out of closes on the price basis", async () => {
+    vi.stubGlobal("fetch", async () =>
+      Response.json({
+        chart: {
+          result: [
+            {
+              meta: { symbol: "BBCA.JK", currency: "IDR", exchangeTimezoneName: "Asia/Jakarta" },
+              timestamp: [1791417600, 1791504000],
+              indicators: { quote: [{ close: [9000, 9100] }], adjclose: [{ adjclose: [8800, 9100] }] },
+            },
+          ],
+          error: null,
+        },
+      }),
+    )
+    const values = async (...basis: ["price"] | []) =>
+      (await yahooProvider.history("BBCA.JK", "1y", ...basis)).points.map((p) => p.value)
+    expect(await values()).toEqual([8800, 9100])
+    expect(await values("price")).toEqual([9000, 9100])
+  })
+})
+
+type Reported = [date: string, value: number] | null
+
+/** Stubs Yahoo's fundamentals endpoint: each requested type answers with its series, or with none. */
+function stubTimeseries(series: Record<string, Reported[]>, currencyCode = "IDR") {
+  vi.stubGlobal("fetch", async (url: string) => {
+    const types = (new URL(url).searchParams.get("type") ?? "").split(",")
+    const result = types.map((type) => ({
+      meta: { symbol: ["TEST.JK"], type: [type] },
+      ...(series[type] && {
+        [type]: series[type].map((item) => item && { asOfDate: item[0], currencyCode, reportedValue: { raw: item[1] } }),
+      }),
+    }))
+    return Response.json({ timeseries: { result, error: null } })
+  })
+}
+
+describe("yahoo book value", () => {
+  it("divides equity by shares at each balance-sheet date, across annual and quarterly reports", async () => {
+    stubTimeseries({
+      annualCommonStockEquity: [["2024-12-31", 1000], ["2025-12-31", 1200]],
+      annualOrdinarySharesNumber: [["2024-12-31", 10], ["2025-12-31", 10]],
+      // Yahoo leaves a hole where it has no filing for a quarter.
+      quarterlyCommonStockEquity: [["2025-12-31", 1200], null, ["2026-06-30", 1100]],
+      quarterlyOrdinarySharesNumber: [["2025-12-31", 10], null, ["2026-06-30", 11]],
+    })
+    expect(await yahooProvider.bookValue!("TEST.JK")).toEqual({
+      symbol: "TEST.JK",
+      currency: "IDR",
+      points: [
+        { time: "2024-12-31", value: 100 },
+        { time: "2025-12-31", value: 120 },
+        { time: "2026-06-30", value: 100 },
+      ],
+    })
+  })
+
+  it("reports the currency of the accounts and falls back to broader fields", async () => {
+    stubTimeseries({ annualStockholdersEquity: [["2025-12-31", -50]], annualShareIssued: [["2025-12-31", 1000]] }, "USD")
+    const book = await yahooProvider.bookValue!("TEST.JK")
+    expect(book.currency).toBe("USD")
+    expect(book.points).toEqual([{ time: "2025-12-31", value: -0.05 }])
+  })
+
+  it("answers 404 for symbols without balance sheets", async () => {
+    stubTimeseries({})
+    await expect(yahooProvider.bookValue!("^JKSE")).rejects.toMatchObject({ status: 404 })
+  })
+})

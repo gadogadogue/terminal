@@ -7,6 +7,25 @@ export function daysBetween(from: string, to: string): number {
 }
 
 /**
+ * Combines each point with the `other` value of the same day, or the most
+ * recent earlier one, since two series rarely share every date. Points
+ * before `other` begins are dropped.
+ */
+export function withLatest(
+  points: PricePoint[],
+  other: PricePoint[],
+  combine: (value: number, latest: number) => number,
+): PricePoint[] {
+  const out: PricePoint[] = []
+  let j = -1
+  for (const p of points) {
+    while (j + 1 < other.length && other[j + 1].time <= p.time) j++
+    if (j >= 0) out.push({ time: p.time, value: combine(p.value, other[j].value) })
+  }
+  return out
+}
+
+/**
  * Converts a price series into another currency. `fx` holds the value of one
  * unit of the series currency in the target currency (e.g. USDIDR for a USD
  * asset viewed in IDR). Each point uses the FX rate of the same day, or the
@@ -14,13 +33,7 @@ export function daysBetween(from: string, to: string): number {
  */
 export function convertCurrency(points: PricePoint[], fx: PricePoint[] | null): PricePoint[] {
   if (!fx) return points
-  const out: PricePoint[] = []
-  let j = -1
-  for (const p of points) {
-    while (j + 1 < fx.length && fx[j + 1].time <= p.time) j++
-    if (j >= 0) out.push({ time: p.time, value: p.value * fx[j].value })
-  }
-  return out
+  return withLatest(points, fx, (value, rate) => value * rate)
 }
 
 export function clipFrom(points: PricePoint[], start: string): PricePoint[] {

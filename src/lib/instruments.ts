@@ -30,6 +30,11 @@ export function lineDashOf(inst: Instrument, group: InstrumentGroup): LineDash {
 /** Symbols are passed straight to upstream URLs, so keep them conservative. */
 export const SYMBOL_PATTERN = /^[A-Za-z0-9.\-=^_]{1,24}$/
 
+/** A stock's P/BV chart. The symbol rides in the URL so any page can link to it. */
+export function valuationHref(symbol: string): string {
+  return `/valuation?${new URLSearchParams({ symbol })}`
+}
+
 /** Stable identity, also used to de-duplicate lists. */
 export function instrumentKey(inst: Instrument): string {
   switch (inst.kind) {

@@ -6,6 +6,14 @@ export interface PricePoint {
   value: number
 }
 
+/**
+ * What a history's closes stand for. "total" folds dividends back in, which
+ * is right for returns; "price" is what the stock traded at, which is right
+ * for a ratio such as P/BV. Both are on today's share count.
+ */
+export const PRICE_BASES = ["total", "price"] as const
+export type PriceBasis = (typeof PRICE_BASES)[number]
+
 export interface PriceHistory {
   symbol: string
   name: string
@@ -16,8 +24,21 @@ export interface PriceHistory {
   /**
    * Dividend/split-adjusted closes where the provider has them, so returns
    * are total returns and comparable with a fixed-rate benchmark. The last
-   * point is the latest price (adjustments only rewrite the past).
+   * point is the latest price (adjustments only rewrite the past). With the
+   * "price" basis, dividends are left out.
    */
+  points: PricePoint[]
+}
+
+/**
+ * Book value per share at each balance-sheet date the provider has, oldest
+ * first, on today's share count so it lines up with split-adjusted prices.
+ * Negative when liabilities exceed assets.
+ */
+export interface BookValueHistory {
+  symbol: string
+  /** ISO 4217 code of `points`: the currency of the accounts, not always the trading currency. */
+  currency: string
   points: PricePoint[]
 }
 
@@ -77,10 +98,12 @@ export interface MarketSnapshot {
 export interface DataProvider {
   id: string
   name: string
-  history(symbol: string, range: FetchRange): Promise<PriceHistory>
+  history(symbol: string, range: FetchRange, basis?: PriceBasis): Promise<PriceHistory>
   search(query: string): Promise<SearchResult[]>
   /** Every listed stock in the home market. Optional: the screener needs it. */
   screen?(): Promise<MarketSnapshot>
+  /** A company's book value over time. Optional: the valuation chart needs it. */
+  bookValue?(symbol: string): Promise<BookValueHistory>
 }
 
 export class ProviderError extends Error {

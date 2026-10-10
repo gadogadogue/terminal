@@ -27,6 +27,8 @@ export interface ChartLine {
   dash: LineDash
   /** Percent change from the common start. */
   points: PricePoint[]
+  /** The values behind the change, printed in the legend next to it. */
+  level?: { points: PricePoint[]; format: (value: number | null) => string }
 }
 
 // Plain Dotted is 1px on, 1px off at our 1px width and reads as a faint solid line.
@@ -252,6 +254,11 @@ export function ComparisonChart({
             <span className="max-w-56 truncate text-muted-foreground" title={line.label}>
               {line.label}
             </span>
+            {line.level && (
+              <span className="tabular-nums text-foreground">
+                {line.level.format(shownTime ? valueAt(line.level.points, shownTime) : null)}
+              </span>
+            )}
           </div>
         ))}
         {shownTime && (

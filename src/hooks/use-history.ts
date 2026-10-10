@@ -1,7 +1,13 @@
 "use client"
 
 import { queryOptions } from "@tanstack/react-query"
-import type { MarketSnapshot, PriceHistory, SearchResult } from "@/lib/providers/types"
+import type {
+  BookValueHistory,
+  MarketSnapshot,
+  PriceBasis,
+  PriceHistory,
+  SearchResult,
+} from "@/lib/providers/types"
 import type { FetchRange } from "@/lib/ranges"
 
 async function getJson<T>(url: string): Promise<T> {
@@ -11,13 +17,20 @@ async function getJson<T>(url: string): Promise<T> {
   return body as T
 }
 
-export function historyQuery(symbol: string, range: FetchRange) {
+export function historyQuery(symbol: string, range: FetchRange, basis: PriceBasis = "total") {
   return queryOptions({
-    queryKey: ["history", symbol, range] as const,
-    queryFn: () => getJson<PriceHistory>(`/api/history?${new URLSearchParams({ symbol, range })}`),
+    queryKey: ["history", symbol, range, basis] as const,
+    queryFn: () => getJson<PriceHistory>(`/api/history?${new URLSearchParams({ symbol, range, basis })}`),
     // While a longer range loads, keep showing this symbol's previous data.
     placeholderData: (previous, previousQuery) =>
-      previousQuery?.queryKey[1] === symbol ? previous : undefined,
+      previousQuery?.queryKey[1] === symbol && previousQuery.queryKey[3] === basis ? previous : undefined,
+  })
+}
+
+export function bookValueQuery(symbol: string) {
+  return queryOptions({
+    queryKey: ["book-value", symbol] as const,
+    queryFn: () => getJson<BookValueHistory>(`/api/book-value?${new URLSearchParams({ symbol })}`),
   })
 }
 

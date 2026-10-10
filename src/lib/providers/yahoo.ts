@@ -2,8 +2,10 @@ import { fxSymbol, normalizeCurrency } from "@/lib/currency"
 import { intervalFor, type FetchRange } from "@/lib/ranges"
 import {
   ProviderError,
+  type BookValueHistory,
   type DataProvider,
   type MarketSnapshot,
+  type PriceBasis,
   type PriceHistory,
   type PricePoint,
   type SearchResult,
@@ -18,6 +20,7 @@ import {
  */
 
 const CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/"
+const TIMESERIES_URL = "https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/"
 const SEARCH_URL = "https://query2.finance.yahoo.com/v1/finance/search"
 const SCREENER_URL = "https://query2.finance.yahoo.com/v1/finance/screener"
 const CRUMB_URL = "https://query2.finance.yahoo.com/v1/test/getcrumb"
@@ -88,6 +91,27 @@ interface ChartResponse {
     error: { code: string; description: string } | null
   }
 }
+
+/** One balance-sheet figure. Yahoo leaves holes in the list as nulls. */
+type ReportedValue = { asOfDate?: string; currencyCode?: string; reportedValue?: { raw?: number } } | null
+
+interface TimeseriesResponse {
+  timeseries: {
+    /** One entry per requested type; the values sit under a key named after the type. */
+    result: Array<{ meta: { type: string[] } } & Record<string, unknown>> | null
+    error: { code: string; description: string } | null
+  }
+}
+
+/**
+ * Balance-sheet fields to try in order: equity that belongs to ordinary
+ * shareholders, and shares outstanding. Yahoo restates share counts for
+ * later splits, so the two divide into a per-share value on today's count.
+ */
+const EQUITY_FIELDS = ["CommonStockEquity", "StockholdersEquity"]
+const SHARE_FIELDS = ["OrdinarySharesNumber", "ShareIssued"]
+/** Yahoo serves about four year-ends and the latest five quarters. */
+const REPORT_PERIODS = ["annual", "quarterly"]
 
 interface SearchResponse {
   quotes?: Array<{
@@ -169,7 +193,7 @@ async function getJson<T>(url: string): Promise<T> {
   return (await res.json()) as T
 }
 
-async function history(symbol: string, range: FetchRange): Promise<PriceHistory> {
+async function history(symbol: string, range: FetchRange, basis: PriceBasis = "total"): Promise<PriceHistory> {
   const params = new URLSearchParams({ range, interval: intervalFor(range), events: "div,split" })
   const data = await getJson<ChartResponse>(`${CHART_URL}${encodeURIComponent(symbol)}?${params}`)
 
@@ -187,7 +211,8 @@ async function history(symbol: string, range: FetchRange): Promise<PriceHistory>
 
   const points: PricePoint[] = []
   for (let i = 0; i < timestamps.length; i++) {
-    const raw = adjCloses[i] ?? closes[i]
+    // Plain closes are already split-adjusted; only dividends set the two apart.
+    const raw = basis === "price" ? closes[i] : (adjCloses[i] ?? closes[i])
     if (raw == null || !Number.isFinite(raw) || raw <= 0) continue
     const point = { time: localDate(timestamps[i], timeZone), value: raw / divisor }
     // Yahoo repeats the live session as an extra row; keep the latest.
@@ -205,6 +230,48 @@ async function history(symbol: string, range: FetchRange): Promise<PriceHistory>
     instrumentType: meta.instrumentType ?? null,
     points,
   }
+}
+
+async function bookValue(symbol: string): Promise<BookValueHistory> {
+  const fields = [...EQUITY_FIELDS, ...SHARE_FIELDS]
+  const params = new URLSearchParams({
+    type: REPORT_PERIODS.flatMap((period) => fields.map((field) => period + field)).join(","),
+    period1: "0",
+    period2: String(Math.floor(Date.now() / 1000)),
+  })
+  const data = await getJson<TimeseriesResponse>(`${TIMESERIES_URL}${encodeURIComponent(symbol)}?${params}`)
+
+  // Field → balance-sheet date → value. Annual and quarterly reports agree
+  // where they share a date, so either may fill it.
+  const reported = new Map<string, Map<string, number>>(fields.map((field) => [field, new Map()]))
+  let currencyCode: string | undefined
+  for (const entry of data.timeseries?.result ?? []) {
+    const type = entry.meta.type[0]
+    const field = fields.find((f) => type.endsWith(f))
+    if (!field) continue
+    for (const item of (entry[type] as ReportedValue[] | undefined) ?? []) {
+      const value = finite(item?.reportedValue?.raw)
+      if (!item?.asOfDate || value == null) continue
+      reported.get(field)!.set(item.asOfDate, value)
+      // Share counts carry a currency code too, but it means nothing there.
+      if (EQUITY_FIELDS.includes(field)) currencyCode ??= item.currencyCode
+    }
+  }
+
+  const first = (candidates: string[], date: string) =>
+    candidates.map((field) => reported.get(field)!.get(date)).find((value) => value != null)
+  const { currency, divisor } = normalizeCurrency(currencyCode)
+  const dates = [...new Set(EQUITY_FIELDS.flatMap((field) => [...reported.get(field)!.keys()]))].sort()
+  const points: PricePoint[] = []
+  for (const time of dates) {
+    const equity = first(EQUITY_FIELDS, time)
+    const shares = first(SHARE_FIELDS, time)
+    if (equity != null && shares != null && shares > 0) points.push({ time, value: equity / shares / divisor })
+  }
+
+  // Indices, funds, currencies and unknown symbols answer with empty series.
+  if (points.length === 0) throw new ProviderError(`No balance sheets for ${symbol}`, 404)
+  return { symbol, currency, points }
 }
 
 async function searchQuotes(query: string): Promise<NonNullable<SearchResponse["quotes"]>> {
@@ -417,4 +484,5 @@ export const yahooProvider: DataProvider = {
   history,
   search,
   screen,
+  bookValue,
 }

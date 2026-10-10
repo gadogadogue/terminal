@@ -1,6 +1,7 @@
 "use client"
 
 import { ArrowDownIcon, ArrowUpDownIcon, ArrowUpIcon, CheckIcon, PlusIcon } from "lucide-react"
+import Link from "next/link"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -13,6 +14,7 @@ import {
   type SortKey,
 } from "@/lib/analytics/screener"
 import { formatAmount, formatPrice, formatRatio, formatShortPercent, signClass } from "@/lib/format"
+import { valuationHref } from "@/lib/instruments"
 import type { StockSnapshot } from "@/lib/providers/types"
 import { cn } from "@/lib/utils"
 
@@ -208,20 +210,32 @@ function ResultRow({
       {SCREEN_METRICS.map((metric) => {
         const value = metrics[metric.key]
         const converted = stock.reportingCurrency && value != null && BOOK_BASED.has(metric.key)
+        const text = converted ? (
+          <span
+            title={`Book value is reported in ${stock.reportingCurrency} and converted at the latest rate. The source rounds it, so this is approximate.`}
+          >
+            <span className="text-muted-foreground">≈</span>
+            {formatMetric(value, metric)}
+          </span>
+        ) : (
+          formatMetric(value, metric)
+        )
         return (
           <TableCell
             key={metric.key}
             className={cn("text-right tabular-nums last:pr-4", isSigned(metric) && signClass(value))}
           >
-            {converted ? (
-              <span
-                title={`Book value is reported in ${stock.reportingCurrency} and converted at the latest rate. The source rounds it, so this is approximate.`}
+            {metric.key === "pbv" && value != null ? (
+              <Link
+                href={valuationHref(stock.symbol)}
+                title={converted ? undefined : "See whether the price or book value moved it"}
+                aria-label={`What moved ${stock.symbol}'s P/BV`}
+                className="rounded-sm underline decoration-muted-foreground/50 decoration-dotted underline-offset-4 hover:decoration-foreground hover:decoration-solid"
               >
-                <span className="text-muted-foreground">≈</span>
-                {formatMetric(value, metric)}
-              </span>
+                {text}
+              </Link>
             ) : (
-              formatMetric(value, metric)
+              text
             )}
           </TableCell>
         )

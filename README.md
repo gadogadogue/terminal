@@ -1,6 +1,6 @@
 # Terminal
 
-An open-source terminal for investment research, in two parts.
+An open-source terminal for investment research, in three parts.
 
 **Compare** puts your picks against simple benchmarks, all on one chart, in
 one currency, from one start date:
@@ -13,6 +13,11 @@ one currency, from one start date:
 **Screener** lists every IDX stock with its valuation, so you can find ideas
 by P/BV, ROE, P/E, dividend yield, size and liquidity, then add the ones you
 like to the watchlist and compare them.
+
+**Valuation** answers one question about a stock's P/BV: did it move because
+of the price or because of book value? It plots price, book value per share
+and P/BV as percent change from one start date, and splits the move between
+the two.
 
 There is **no database and no account**. Your watchlist lives in your browser
 and you keep it as a plain JSON file: export it, store it anywhere, import it
@@ -31,6 +36,9 @@ and you keep it as a plain JSON file: export it, store it anywhere, import it
 - A screener over the whole IDX: min/max filters on nine metrics, sectors,
   sortable columns, and presets (below book, cheap & profitable, Graham,
   high yield) as starting points
+- A P/BV chart per stock (click any P/BV in the screener): price, book value
+  per share and the ratio on one start date, with the share of the move that
+  came from each
 - Light and dark themes
 
 ## Getting started
@@ -116,6 +124,15 @@ know each stock's sector. Yahoo reports book value in the company's
 reporting currency but prices in IDR, so its own P/BV is wrong for companies
 that report in USD; the screener converts their book value at the latest
 USD/IDR rate and computes every ratio itself.
+
+The valuation chart uses Yahoo's **fundamentals endpoint** for balance
+sheets: equity and shares outstanding at about four year-ends and the latest
+five quarters (a quarter is sometimes missing), cached for a day. Book value
+per share is equity over shares, held flat from one balance-sheet date to
+the next; share counts arrive restated for splits, so it lines up with
+split-adjusted prices. Unlike Compare, this chart uses closes without
+dividends, since P/BV is about the price a share trades at. Book value in
+another currency is converted at each day's rate.
 
 **Why not TradingView data?** TradingView has no public data API, and
 scraping its feeds breaks its terms of use, which is a non-starter for an
