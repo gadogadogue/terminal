@@ -128,7 +128,7 @@ function stubScreener({
   return calls
 }
 
-/** A fresh module, so each test starts without a cached screener session. */
+/** A fresh module, so each test starts without a cached session. */
 async function freshProvider() {
   vi.resetModules()
   return (await import("./yahoo")).yahooProvider
@@ -321,5 +321,154 @@ describe("yahoo earnings", () => {
     expect((await yahooProvider.earnings!("TEST.JK")).points).toEqual([{ time: "2025-12-31", value: -3 }])
     stubTimeseries({})
     await expect(yahooProvider.earnings!("^JKSE")).rejects.toMatchObject({ status: 404 })
+  })
+})
+
+/** A stake the way Yahoo sends it: every number wrapped with its formatted text. */
+const stake = (organization: string, pct: number, shares = 1000) => ({
+  organization,
+  pctHeld: { raw: pct, fmt: `${(pct * 100).toFixed(2)}%` },
+  position: { raw: shares, fmt: String(shares) },
+  value: { raw: shares * 9000, fmt: "" },
+  pctChange: { raw: 0.05, fmt: "5.00%" },
+  // Midnight UTC on 30 June 2026.
+  reportDate: { raw: 1782777600, fmt: "2026-06-30" },
+})
+
+/**
+ * Stubs Yahoo's session and company summary endpoints. Crumbs are issued
+ * from `crumbs` in order and only the last is accepted; `summary` is the
+ * modules Yahoo has for the symbol, or null for a symbol it doesn't know.
+ */
+function stubSummary(summary: Record<string, unknown> | null, crumbs = ["crumb-1"]) {
+  const calls = { crumbs: 0, modules: [] as string[] }
+  vi.stubGlobal("fetch", async (url: string) => {
+    const u = new URL(url)
+    if (u.hostname === "fc.yahoo.com") {
+      return new Response("", { status: 404, headers: { "set-cookie": "A3=session; Domain=.yahoo.com; Path=/" } })
+    }
+    if (u.pathname.endsWith("/getcrumb")) {
+      return new Response(crumbs[Math.min(calls.crumbs++, crumbs.length - 1)])
+    }
+    if (u.pathname.includes("/quoteSummary/")) {
+      if (u.searchParams.get("crumb") !== crumbs[crumbs.length - 1]) {
+        return Response.json({ finance: { result: null, error: { description: "Invalid Crumb" } } }, { status: 401 })
+      }
+      calls.modules = (u.searchParams.get("modules") ?? "").split(",")
+      if (!summary) {
+        const error = { code: "Not Found", description: "Quote not found for symbol: ZZZZ.JK" }
+        return Response.json({ quoteSummary: { result: null, error } }, { status: 404 })
+      }
+      return Response.json({ quoteSummary: { result: [summary], error: null } })
+    }
+    throw new Error(`Unexpected request to ${url}`)
+  })
+  return calls
+}
+
+describe("yahoo ownership", () => {
+  it("names institutions, funds and insiders, largest first, under the totals", async () => {
+    const calls = stubSummary({
+      price: { longName: "PT Bank Central Asia Tbk", currency: "IDR", regularMarketPrice: 9000 },
+      defaultKeyStatistics: { sharesOutstanding: 900_000, impliedSharesOutstanding: 1_000_000 },
+      // The totals arrive as bare numbers even where the stakes are wrapped.
+      majorHoldersBreakdown: { insidersPercentHeld: 0.608, institutionsPercentHeld: 0.198 },
+      institutionOwnership: { ownershipList: [stake("Blackrock Inc.", 0.05), stake("Gamma Investing LLC", 0)] },
+      fundOwnership: { ownershipList: [stake("iShares Trust-iShares MSCI Indonesia ETF", 0.0025, 2500)] },
+      insiderHolders: {
+        holders: [
+          // Shares held in a person's own name and through a trust both count.
+          {
+            name: "HARTONO ROBERT",
+            relation: "Director",
+            positionDirect: { raw: 20_000 },
+            positionIndirect: { raw: 80_000 },
+            positionDirectDate: { raw: 1790899200 },
+          },
+          { name: "NO SHARES", relation: "Officer", positionDirect: {} },
+        ],
+      },
+    })
+    const ownership = await (await freshProvider()).ownership!("BBCA.JK")
+    expect(calls.modules).toContain("majorHoldersBreakdown")
+    expect(ownership).toEqual({
+      symbol: "BBCA.JK",
+      name: "PT Bank Central Asia Tbk",
+      currency: "IDR",
+      insiders: 0.608,
+      institutions: 0.198,
+      holders: [
+        {
+          name: "HARTONO ROBERT",
+          kind: "insider",
+          role: "Director",
+          // Over every share class, not only the listed one.
+          percent: 0.1,
+          shares: 100_000,
+          value: 900_000_000,
+          change: null,
+          reported: "2026-10-02",
+        },
+        {
+          name: "Blackrock Inc.",
+          kind: "institution",
+          percent: 0.05,
+          shares: 1000,
+          value: 9_000_000,
+          change: 0.05,
+          reported: "2026-06-30",
+        },
+        {
+          name: "iShares MSCI Indonesia ETF",
+          kind: "fund",
+          family: "iShares Trust",
+          percent: 0.0025,
+          shares: 2500,
+          value: 22_500_000,
+          change: 0.05,
+          reported: "2026-06-30",
+        },
+      ],
+    })
+  })
+
+  it("splits a fund from the trust it is registered under, and nowhere else", async () => {
+    const names = [
+      "VANGUARD Intl Eqy. INDEX Fd.S-Vanguard FTSE All-World ex-US Index Fd.",
+      "Vanguard Tax-Managed Funds-Vanguard Developed Markets Index Fund",
+      "T. ROWE PRICE Intl Fd.S, INC.-T. Rowe Price Emerging Markets Discovery",
+      "Fidelity Rutland Square TRT II-Strategic Advisers Emerging Markets Fd.",
+      "AIM Investment Fd.s -Invesco Developing Markets Fd.",
+      "Invesco QQQ Trust, Series 1",
+      "Schwab U.S. Large-Cap Growth ETF",
+    ]
+    stubSummary({ fundOwnership: { ownershipList: names.map((name, i) => stake(name, 0.01 - i * 0.001)) } })
+    const { holders } = await (await freshProvider()).ownership!("BBCA.JK")
+    expect(holders.map((h) => [h.family, h.name])).toEqual([
+      ["VANGUARD Intl Eqy. INDEX Fd.S", "Vanguard FTSE All-World ex-US Index Fd."],
+      ["Vanguard Tax-Managed Funds", "Vanguard Developed Markets Index Fund"],
+      ["T. ROWE PRICE Intl Fd.S, INC.", "T. Rowe Price Emerging Markets Discovery"],
+      ["Fidelity Rutland Square TRT II", "Strategic Advisers Emerging Markets Fd."],
+      ["AIM Investment Fd.s", "Invesco Developing Markets Fd."],
+      [undefined, "Invesco QQQ Trust, Series 1"],
+      [undefined, "Schwab U.S. Large-Cap Growth ETF"],
+    ])
+  })
+
+  it("answers 404 for symbols without shareholders, and for unknown ones", async () => {
+    stubSummary({ price: { longName: "IDX COMPOSITE", currency: "IDR" }, majorHoldersBreakdown: {} })
+    await expect((await freshProvider()).ownership!("^JKSE")).rejects.toMatchObject({ status: 404 })
+    stubSummary(null)
+    await expect((await freshProvider()).ownership!("ZZZZ.JK")).rejects.toMatchObject({
+      status: 404,
+      message: "Quote not found for symbol: ZZZZ.JK",
+    })
+  })
+
+  it("renews an expired session once", async () => {
+    const calls = stubSummary({ majorHoldersBreakdown: { insidersPercentHeld: 0.5 } }, ["stale", "fresh"])
+    const ownership = await (await freshProvider()).ownership!("BBRI.JK")
+    expect(ownership).toMatchObject({ name: "BBRI.JK", insiders: 0.5, institutions: null, holders: [] })
+    expect(calls.crumbs).toBe(2)
   })
 })

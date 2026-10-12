@@ -39,6 +39,14 @@ export function valuationHref(symbol: string, ratio: ValuationRatio = "pbv"): st
   return `/valuation?${new URLSearchParams({ symbol, ratio })}`
 }
 
+/** Indices (^JKSE), currencies (USDIDR=X) and futures (GC=F) are not companies: no accounts, no shareholders. */
+export const isCompany = (symbol: string) => !/[\^=]/.test(symbol)
+
+/** A stock's place in the ownership network. The symbol rides in the URL so any page can link to it. */
+export function ownershipHref(symbol: string): string {
+  return `/ownership?${new URLSearchParams({ symbol })}`
+}
+
 /** Stable identity, also used to de-duplicate lists. */
 export function instrumentKey(inst: Instrument): string {
   switch (inst.kind) {

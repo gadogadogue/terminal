@@ -5,6 +5,7 @@ import type {
   BookValueHistory,
   EarningsHistory,
   MarketSnapshot,
+  Ownership,
   PriceBasis,
   PriceHistory,
   SearchResult,
@@ -39,6 +40,13 @@ export function earningsQuery(symbol: string) {
   return queryOptions({
     queryKey: ["earnings-per-share", symbol] as const,
     queryFn: () => getJson<EarningsHistory>(`/api/earnings-per-share?${new URLSearchParams({ symbol })}`),
+  })
+}
+
+export function ownershipQuery(symbol: string) {
+  return queryOptions({
+    queryKey: ["ownership", symbol] as const,
+    queryFn: () => getJson<Ownership>(`/api/ownership?${new URLSearchParams({ symbol })}`),
   })
 }
 

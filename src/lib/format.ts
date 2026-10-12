@@ -28,6 +28,13 @@ export function formatShortPercent(fraction: number | null | undefined, signed =
   return (signed ? signedShortPercent : shortPercent).format(fraction)
 }
 
+const share = new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+/** A part of a whole, which has no sign: 0.0059 → "0.59%". */
+export function formatShare(fraction: number | null | undefined): string {
+  return fraction == null || !Number.isFinite(fraction) ? "—" : share.format(fraction)
+}
+
 /** A multiple like P/E: two decimals while small, fewer as it grows. */
 export function formatRatio(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "—"

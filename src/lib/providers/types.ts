@@ -56,6 +56,51 @@ export interface EarningsHistory {
   yearEnds: string[]
 }
 
+/**
+ * What a named holder is. An institution is an asset manager or other
+ * company, a fund is one fund it runs, and an insider is a director, officer
+ * or other person tied to the company.
+ */
+export const HOLDER_KINDS = ["institution", "fund", "insider"] as const
+export type HolderKind = (typeof HOLDER_KINDS)[number]
+
+/** One named owner of a company's shares. */
+export interface Holder {
+  name: string
+  kind: HolderKind
+  /** The trust or company a fund is registered under, when the provider names it. */
+  family?: string
+  /** An insider's position at the company. */
+  role?: string
+  /** Share of the company held, as a fraction. */
+  percent: number
+  shares: number | null
+  /** Market value of the stake, in the stock's trading currency. */
+  value: number | null
+  /** Change in the share count since the filing before, as a fraction. */
+  change: number | null
+  /** The date the stake was reported for, YYYY-MM-DD. */
+  reported: string | null
+}
+
+/**
+ * Who owns a company. `insiders` and `institutions` are totals over every
+ * holder of that sort, named or not, so they say more than `holders` adds up
+ * to. Kinds overlap: an institution's stake includes the funds it runs.
+ */
+export interface Ownership {
+  symbol: string
+  name: string
+  /** ISO 4217 code of each holder's `value`. */
+  currency: string
+  /** Fraction held by insiders: founders, parent companies, the state, directors. */
+  insiders: number | null
+  /** Fraction held by institutions, their funds included. */
+  institutions: number | null
+  /** Named holders, largest first. */
+  holders: Holder[]
+}
+
 export interface SearchResult {
   symbol: string
   name: string
@@ -120,6 +165,8 @@ export interface DataProvider {
   bookValue?(symbol: string): Promise<BookValueHistory>
   /** A company's earnings over time. Optional: the valuation chart needs it for P/E. */
   earnings?(symbol: string): Promise<EarningsHistory>
+  /** A company's shareholders. Optional: the ownership network needs it. */
+  ownership?(symbol: string): Promise<Ownership>
 }
 
 export class ProviderError extends Error {

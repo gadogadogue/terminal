@@ -5,7 +5,9 @@ import {
   type BookValueHistory,
   type DataProvider,
   type EarningsHistory,
+  type Holder,
   type MarketSnapshot,
+  type Ownership,
   type PriceBasis,
   type PriceHistory,
   type PricePoint,
@@ -24,8 +26,9 @@ const CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/"
 const TIMESERIES_URL = "https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/"
 const SEARCH_URL = "https://query2.finance.yahoo.com/v1/finance/search"
 const SCREENER_URL = "https://query2.finance.yahoo.com/v1/finance/screener"
+const SUMMARY_URL = "https://query2.finance.yahoo.com/v10/finance/quoteSummary/"
 const CRUMB_URL = "https://query2.finance.yahoo.com/v1/test/getcrumb"
-/** Answers 404, but sets the cookie that the screener's crumb is tied to. */
+/** Answers 404, but sets the cookie that the crumb is tied to. */
 const COOKIE_URL = "https://fc.yahoo.com/"
 const USER_AGENT = "Mozilla/5.0"
 const HEADERS = { "User-Agent": USER_AGENT, Accept: "application/json" }
@@ -176,6 +179,63 @@ interface ScreenerResponse {
     error: { code: string; description: string } | null
   }
 }
+
+/** Yahoo prints a number bare, or wrapped with its formatted text, or as an empty object when it has none. */
+type Figure = number | { raw?: number } | null
+
+/** An institution's or a fund's stake, from its latest filing. */
+interface FiledStake {
+  organization?: string
+  pctHeld?: Figure
+  position?: Figure
+  value?: Figure
+  pctChange?: Figure
+  reportDate?: Figure
+}
+
+/** A person's stake: shares in their own name, and shares held for them through a trust or company. */
+interface InsiderStake {
+  name?: string
+  relation?: string
+  positionDirect?: Figure
+  positionIndirect?: Figure
+  positionDirectDate?: Figure
+  positionIndirectDate?: Figure
+}
+
+interface SummaryResponse {
+  quoteSummary: {
+    /** One entry, holding the requested modules Yahoo has for the symbol. */
+    result: Array<{
+      price?: { longName?: string | null; shortName?: string | null; currency?: string; regularMarketPrice?: Figure }
+      defaultKeyStatistics?: { sharesOutstanding?: Figure; impliedSharesOutstanding?: Figure }
+      majorHoldersBreakdown?: { insidersPercentHeld?: Figure; institutionsPercentHeld?: Figure }
+      institutionOwnership?: { ownershipList?: FiledStake[] }
+      fundOwnership?: { ownershipList?: FiledStake[] }
+      insiderHolders?: { holders?: InsiderStake[] }
+    }> | null
+    error: { code: string; description: string } | null
+  }
+}
+
+/** Each holder list comes ten long at most, so one request has every name Yahoo gives. */
+const OWNERSHIP_MODULES = [
+  "price",
+  "defaultKeyStatistics",
+  "majorHoldersBreakdown",
+  "institutionOwnership",
+  "fundOwnership",
+  "insiderHolders",
+]
+
+/**
+ * Yahoo writes a fund as the trust it is registered under, a hyphen, then
+ * the fund: "iShares Trust-iShares MSCI Indonesia ETF". Fund names have
+ * hyphens of their own ("Tax-Managed", "ex-US"), so the trust ends at the
+ * first hyphen that follows a word trusts end in.
+ */
+const FUND_FAMILY =
+  /^(.*?\b(?:funds?|fd\.?s?|etfs?|trust|trt|series|price|group|portfolios?|inc|corp|co|llc|ltd|plc)\b[.,]?(?: [IVX]+)?)\s*-\s*(\S.*)$/i
 
 type Operand = { operator: string; operands: unknown[] }
 
@@ -404,15 +464,15 @@ async function openSession(): Promise<Session> {
   const crumbRes = await reach(CRUMB_URL, { headers: { "User-Agent": USER_AGENT, Cookie: cookie } })
   const crumb = (await crumbRes.text()).trim()
   if (!cookie || !crumbRes.ok || !crumb || crumb.startsWith("{")) {
-    throw new ProviderError("Yahoo Finance did not open a screener session")
+    throw new ProviderError("Yahoo Finance did not open a session")
   }
   return { cookie, crumb }
 }
 
 /**
- * The screener wants a cookie plus a matching "crumb". They last for hours,
- * so one session is shared; passing the session that failed replaces it,
- * once, however many requests saw it fail.
+ * The screener and company summaries want a cookie plus a matching "crumb".
+ * They last for hours, so one session is shared; passing the session that
+ * failed replaces it, once, however many requests saw it fail.
  */
 function yahooSession(failed?: Promise<Session>): Promise<Session> {
   if (!session || session === failed) {
@@ -425,17 +485,34 @@ function yahooSession(failed?: Promise<Session>): Promise<Session> {
   return session
 }
 
+/** A request inside the session. One that Yahoo answers 401 is sent again in a new session, once. */
+async function inSession(
+  url: string,
+  params: Record<string, string>,
+  init: RequestInit = {},
+  retried = false,
+): Promise<Response> {
+  const current = yahooSession()
+  const { cookie, crumb } = await current
+  const res = await reach(`${url}?${new URLSearchParams({ ...params, crumb })}`, {
+    ...init,
+    headers: { ...HEADERS, ...init.headers, Cookie: cookie },
+  })
+  if (res.status === 401 && !retried) {
+    yahooSession(current)
+    return inSession(url, params, init, true)
+  }
+  return res
+}
+
 async function screenPage(
   operands: Operand[],
   offset: number,
   size = SCREEN_PAGE,
-  retried = false,
 ): Promise<{ total: number; quotes: ScreenerQuote[] }> {
-  const current = yahooSession()
-  const { cookie, crumb } = await current
-  const res = await reach(`${SCREENER_URL}?${new URLSearchParams({ crumb, formatted: "false" })}`, {
+  const res = await inSession(SCREENER_URL, { formatted: "false" }, {
     method: "POST",
-    headers: { ...HEADERS, Cookie: cookie, "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       offset,
       size,
@@ -446,10 +523,6 @@ async function screenPage(
       query: { operator: "AND", operands },
     }),
   })
-  if (res.status === 401 && !retried) {
-    yahooSession(current)
-    return screenPage(operands, offset, size, true)
-  }
   if (res.status === 429) throw new ProviderError("Yahoo Finance rate limit reached, try again shortly", 429)
   if (!res.ok) throw new ProviderError(`Yahoo Finance screener responded ${res.status}`)
   const data = (await res.json()) as ScreenerResponse
@@ -483,6 +556,8 @@ async function latestRates(symbols: string[]): Promise<Map<string, number>> {
 }
 
 const finite = (value: number | undefined) => (value != null && Number.isFinite(value) ? value : null)
+
+const figure = (value: Figure | undefined) => finite(typeof value === "number" ? value : value?.raw)
 
 /** Every IDX company is a "Tbk" (publicly listed), so the suffix says nothing. */
 const LISTED_SUFFIX = /[\s,]+Tbk\.?$/i
@@ -562,6 +637,89 @@ async function screen(): Promise<MarketSnapshot> {
   }
 }
 
+async function ownership(symbol: string): Promise<Ownership> {
+  const res = await inSession(`${SUMMARY_URL}${encodeURIComponent(symbol)}`, {
+    modules: OWNERSHIP_MODULES.join(","),
+    formatted: "false",
+  })
+  if (res.status === 429) throw new ProviderError("Yahoo Finance rate limit reached, try again shortly", 429)
+  // Unknown symbols answer 404 with a JSON body.
+  if (!res.ok && res.status !== 404) throw new ProviderError(`Yahoo Finance responded ${res.status}`)
+  const data = (await res.json()) as SummaryResponse
+  const summary = data.quoteSummary?.result?.[0]
+  if (!summary) throw new ProviderError(data.quoteSummary?.error?.description ?? `No data for ${symbol}`, 404)
+
+  const { currency, divisor } = normalizeCurrency(summary.price?.currency)
+  const money = (value: number | null) => (value == null ? null : value / divisor)
+  // Filings are dated by the day they report on, with no time of day.
+  const dated = (value: Figure | undefined) => {
+    const at = figure(value)
+    return at == null ? null : localDate(at, "UTC")
+  }
+
+  const filed = (kind: "institution" | "fund", stakes: FiledStake[] = []): Holder[] =>
+    stakes.flatMap((stake) => {
+      const percent = figure(stake.pctHeld)
+      // Stakes are rounded to 0.01%, so a zero is a holder too small to count.
+      if (!stake.organization || percent == null || percent <= 0) return []
+      const [, family, fund] = (kind === "fund" && FUND_FAMILY.exec(stake.organization)) || []
+      return [
+        {
+          name: fund ?? stake.organization,
+          kind,
+          ...(family && { family }),
+          percent,
+          shares: figure(stake.position),
+          value: money(figure(stake.value)),
+          change: figure(stake.pctChange),
+          reported: dated(stake.reportDate),
+        },
+      ]
+    })
+
+  // People file share counts, not percentages. Every share class counts toward the total.
+  const statistics = summary.defaultKeyStatistics
+  const outstanding = figure(statistics?.impliedSharesOutstanding) ?? figure(statistics?.sharesOutstanding)
+  const price = figure(summary.price?.regularMarketPrice)
+  const people = (summary.insiderHolders?.holders ?? []).flatMap((stake): Holder[] => {
+    const shares = (figure(stake.positionDirect) ?? 0) + (figure(stake.positionIndirect) ?? 0)
+    if (!stake.name || shares <= 0 || outstanding == null || outstanding <= 0) return []
+    return [
+      {
+        name: stake.name,
+        kind: "insider",
+        ...(stake.relation && { role: stake.relation }),
+        percent: shares / outstanding,
+        shares,
+        value: price == null ? null : money(shares * price),
+        change: null,
+        reported: dated(stake.positionDirectDate) ?? dated(stake.positionIndirectDate),
+      },
+    ]
+  })
+
+  const insiders = figure(summary.majorHoldersBreakdown?.insidersPercentHeld)
+  const institutions = figure(summary.majorHoldersBreakdown?.institutionsPercentHeld)
+  const holders = [
+    ...filed("institution", summary.institutionOwnership?.ownershipList),
+    ...filed("fund", summary.fundOwnership?.ownershipList),
+    ...people,
+  ].sort((a, b) => b.percent - a.percent)
+
+  // Indices, funds, currencies and crypto have a quote but no shareholders.
+  if (insiders == null && institutions == null && holders.length === 0) {
+    throw new ProviderError(`No shareholders reported for ${symbol}`, 404)
+  }
+  return {
+    symbol,
+    name: summary.price?.longName ?? summary.price?.shortName ?? symbol,
+    currency,
+    insiders,
+    institutions,
+    holders,
+  }
+}
+
 export const yahooProvider: DataProvider = {
   id: "yahoo",
   name: "Yahoo Finance",
@@ -570,4 +728,5 @@ export const yahooProvider: DataProvider = {
   screen,
   bookValue,
   earnings,
+  ownership,
 }
