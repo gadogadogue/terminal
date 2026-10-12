@@ -264,3 +264,62 @@ describe("yahoo book value", () => {
     await expect(yahooProvider.bookValue!("^JKSE")).rejects.toMatchObject({ status: 404 })
   })
 })
+
+describe("yahoo earnings", () => {
+  it("divides 12-month net income by shares outstanding at year-ends and quarter-ends", async () => {
+    stubTimeseries(
+      {
+        annualNetIncomeCommonStockholders: [["2024-12-31", 400], ["2025-12-31", 500]],
+        trailingNetIncomeCommonStockholders: [["2026-06-30", 660]],
+        annualOrdinarySharesNumber: [["2024-12-31", 100], ["2025-12-31", 100]],
+        quarterlyOrdinarySharesNumber: [["2025-12-31", 100], ["2026-06-30", 110]],
+      },
+      "USD",
+    )
+    expect(await yahooProvider.earnings!("TEST.JK")).toEqual({
+      symbol: "TEST.JK",
+      currency: "USD",
+      points: [
+        { time: "2024-12-31", value: 4 },
+        { time: "2025-12-31", value: 5 },
+        { time: "2026-06-30", value: 6 },
+      ],
+      // The trailing 12 months to June are not a fiscal year.
+      yearEnds: ["2024-12-31", "2025-12-31"],
+    })
+  })
+
+  it("fills the quarters in between from EPS, on today's share count", async () => {
+    stubTimeseries({
+      annualNetIncome: [["2024-12-31", 400], ["2025-12-31", 500]],
+      // Reported before a 10-for-1 split and never restated, unlike the share counts below.
+      trailingDilutedEPS: [["2024-12-31", 40], ["2025-06-30", 45], ["2025-12-31", 5]],
+      trailingDilutedAverageShares: [["2024-12-31", 10], ["2025-06-30", 10], ["2025-12-31", 100]],
+      annualOrdinarySharesNumber: [["2024-12-31", 100], ["2025-12-31", 100]],
+    })
+    const { points } = await yahooProvider.earnings!("TEST.JK")
+    expect(points).toEqual([
+      { time: "2024-12-31", value: 4 },
+      { time: "2025-06-30", value: 4.5 },
+      { time: "2025-12-31", value: 5 },
+    ])
+  })
+
+  it("leaves EPS out when it disagrees with net income", async () => {
+    stubTimeseries({
+      annualNetIncome: [["2024-12-31", 400], ["2025-12-31", 500]],
+      trailingDilutedEPS: [["2024-12-31", 4], ["2025-06-30", 4.5], ["2025-12-31", 208]],
+      trailingDilutedAverageShares: [["2024-12-31", 100], ["2025-06-30", 100], ["2025-12-31", 100]],
+      annualOrdinarySharesNumber: [["2024-12-31", 100], ["2025-12-31", 100]],
+    })
+    const { points } = await yahooProvider.earnings!("TEST.JK")
+    expect(points.map((p) => p.time)).toEqual(["2024-12-31", "2025-12-31"])
+  })
+
+  it("keeps losses, and answers 404 for symbols without income statements", async () => {
+    stubTimeseries({ annualNetIncome: [["2025-12-31", -300]], annualShareIssued: [["2025-12-31", 100]] })
+    expect((await yahooProvider.earnings!("TEST.JK")).points).toEqual([{ time: "2025-12-31", value: -3 }])
+    stubTimeseries({})
+    await expect(yahooProvider.earnings!("^JKSE")).rejects.toMatchObject({ status: 404 })
+  })
+})

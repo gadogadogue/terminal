@@ -4,6 +4,7 @@ import {
   ProviderError,
   type BookValueHistory,
   type DataProvider,
+  type EarningsHistory,
   type MarketSnapshot,
   type PriceBasis,
   type PriceHistory,
@@ -92,7 +93,7 @@ interface ChartResponse {
   }
 }
 
-/** One balance-sheet figure. Yahoo leaves holes in the list as nulls. */
+/** One reported figure. Yahoo leaves holes in the list as nulls. */
 type ReportedValue = { asOfDate?: string; currencyCode?: string; reportedValue?: { raw?: number } } | null
 
 interface TimeseriesResponse {
@@ -112,6 +113,26 @@ const EQUITY_FIELDS = ["CommonStockEquity", "StockholdersEquity"]
 const SHARE_FIELDS = ["OrdinarySharesNumber", "ShareIssued"]
 /** Yahoo serves about four year-ends and the latest five quarters. */
 const REPORT_PERIODS = ["annual", "quarterly"]
+
+/**
+ * Income-statement fields to try in order. An "annual" figure covers the
+ * year to a year-end and a "trailing" one the 12 months to a quarter-end, so
+ * the two are one measure. Yahoo has net income for about four year-ends but
+ * only two quarter-ends. For the other quarters of the last three years it
+ * has EPS and the average share count behind it. Those two are often left
+ * on the share count of their day, so EPS before a split is many times too
+ * high as it stands, but they multiply back into net income either way.
+ */
+const INCOME_FIELDS = ["NetIncomeCommonStockholders", "NetIncome"]
+const EPS_FIELDS = ["DilutedEPS", "BasicEPS"]
+const AVERAGE_SHARE_FIELDS = ["DilutedAverageShares", "BasicAverageShares"]
+const TRAILING_PERIODS = ["annual", "trailing"]
+/**
+ * How far EPS times shares may stray from net income on the dates Yahoo has
+ * both. Its EPS is sometimes rounded to a cent and sometimes plain wrong, so
+ * a company that misses on any such date gets no quarters from EPS at all.
+ */
+const EPS_TOLERANCE = 0.05
 
 interface SearchResponse {
   quotes?: Array<{
@@ -232,46 +253,109 @@ async function history(symbol: string, range: FetchRange, basis: PriceBasis = "t
   }
 }
 
-async function bookValue(symbol: string): Promise<BookValueHistory> {
-  const fields = [...EQUITY_FIELDS, ...SHARE_FIELDS]
+/** Field → period-end date → value, the currency the field is stated in, and the dates annual reports gave. */
+type Reported = Map<string, { currency?: string; on: Map<string, number>; yearEnds: Set<string> }>
+
+const PERIOD_PREFIX = /^(annual|quarterly|trailing)/
+
+const reportTypes = (periods: string[], fields: string[]) =>
+  periods.flatMap((period) => fields.map((field) => period + field))
+
+/**
+ * Reported figures by type, which is a period followed by a field. The
+ * periods of a field are merged, so ask only for periods that agree where
+ * they share a date, as annual and quarterly balance sheets do.
+ */
+async function reported(symbol: string, types: string[]): Promise<Reported> {
   const params = new URLSearchParams({
-    type: REPORT_PERIODS.flatMap((period) => fields.map((field) => period + field)).join(","),
+    type: types.join(","),
     period1: "0",
     period2: String(Math.floor(Date.now() / 1000)),
   })
   const data = await getJson<TimeseriesResponse>(`${TIMESERIES_URL}${encodeURIComponent(symbol)}?${params}`)
 
-  // Field → balance-sheet date → value. Annual and quarterly reports agree
-  // where they share a date, so either may fill it.
-  const reported = new Map<string, Map<string, number>>(fields.map((field) => [field, new Map()]))
-  let currencyCode: string | undefined
+  const figures: Reported = new Map()
   for (const entry of data.timeseries?.result ?? []) {
     const type = entry.meta.type[0]
-    const field = fields.find((f) => type.endsWith(f))
-    if (!field) continue
+    const field = type.replace(PERIOD_PREFIX, "")
+    const figure = figures.get(field) ?? { on: new Map<string, number>(), yearEnds: new Set<string>() }
+    figures.set(field, figure)
     for (const item of (entry[type] as ReportedValue[] | undefined) ?? []) {
       const value = finite(item?.reportedValue?.raw)
       if (!item?.asOfDate || value == null) continue
-      reported.get(field)!.set(item.asOfDate, value)
-      // Share counts carry a currency code too, but it means nothing there.
-      if (EQUITY_FIELDS.includes(field)) currencyCode ??= item.currencyCode
+      figure.on.set(item.asOfDate, value)
+      figure.currency ??= item.currencyCode
+      if (type.startsWith("annual")) figure.yearEnds.add(item.asOfDate)
     }
   }
+  return figures
+}
 
-  const first = (candidates: string[], date: string) =>
-    candidates.map((field) => reported.get(field)!.get(date)).find((value) => value != null)
-  const { currency, divisor } = normalizeCurrency(currencyCode)
-  const dates = [...new Set(EQUITY_FIELDS.flatMap((field) => [...reported.get(field)!.keys()]))].sort()
+/** The first of `fields` with a figure on `date`. */
+const figureOn = (figures: Reported, fields: string[], date: string) =>
+  fields.map((field) => figures.get(field)?.on.get(date)).find((value) => value != null)
+
+/** Every date one of `fields` has a figure on, oldest first. */
+const datesOf = (figures: Reported, fields: string[]) =>
+  [...new Set(fields.flatMap((field) => [...(figures.get(field)?.on.keys() ?? [])]))].sort()
+
+/** Only money fields say something here: share counts carry a currency code too, but it means nothing. */
+const currencyOf = (figures: Reported, fields: string[]) =>
+  normalizeCurrency(fields.map((field) => figures.get(field)?.currency).find((code) => code != null))
+
+async function bookValue(symbol: string): Promise<BookValueHistory> {
+  const figures = await reported(symbol, reportTypes(REPORT_PERIODS, [...EQUITY_FIELDS, ...SHARE_FIELDS]))
+
+  const { currency, divisor } = currencyOf(figures, EQUITY_FIELDS)
   const points: PricePoint[] = []
-  for (const time of dates) {
-    const equity = first(EQUITY_FIELDS, time)
-    const shares = first(SHARE_FIELDS, time)
+  for (const time of datesOf(figures, EQUITY_FIELDS)) {
+    const equity = figureOn(figures, EQUITY_FIELDS, time)
+    const shares = figureOn(figures, SHARE_FIELDS, time)
     if (equity != null && shares != null && shares > 0) points.push({ time, value: equity / shares / divisor })
   }
 
   // Indices, funds, currencies and unknown symbols answer with empty series.
   if (points.length === 0) throw new ProviderError(`No balance sheets for ${symbol}`, 404)
   return { symbol, currency, points }
+}
+
+async function earnings(symbol: string): Promise<EarningsHistory> {
+  const figures = await reported(symbol, [
+    ...reportTypes(TRAILING_PERIODS, INCOME_FIELDS),
+    ...reportTypes(["trailing"], [...EPS_FIELDS, ...AVERAGE_SHARE_FIELDS]),
+    ...reportTypes(REPORT_PERIODS, SHARE_FIELDS),
+  ])
+
+  const fromEps = (date: string) => {
+    const eps = figureOn(figures, EPS_FIELDS, date)
+    const shares = figureOn(figures, AVERAGE_SHARE_FIELDS, date)
+    return eps != null && shares != null ? eps * shares : undefined
+  }
+  const incomeDates = datesOf(figures, INCOME_FIELDS)
+  const checks = incomeDates.flatMap((date) => {
+    const implied = fromEps(date)
+    return implied == null ? [] : [{ income: figureOn(figures, INCOME_FIELDS, date)!, implied }]
+  })
+  const epsHolds =
+    checks.length > 0 &&
+    checks.every(({ income, implied }) => Math.abs(implied - income) <= EPS_TOLERANCE * Math.abs(income))
+
+  const { currency, divisor } = currencyOf(figures, INCOME_FIELDS)
+  const counts = datesOf(figures, SHARE_FIELDS)
+  const points: PricePoint[] = []
+  for (const time of epsHolds ? datesOf(figures, [...INCOME_FIELDS, ...EPS_FIELDS]) : incomeDates) {
+    const income = figureOn(figures, INCOME_FIELDS, time) ?? fromEps(time)
+    // Older quarter-ends have no share count of their own; the last one before still holds.
+    const counted = counts.findLast((date) => date <= time)
+    const shares = counted == null ? undefined : figureOn(figures, SHARE_FIELDS, counted)
+    if (income != null && shares != null && shares > 0) points.push({ time, value: income / shares / divisor })
+  }
+
+  if (points.length === 0) throw new ProviderError(`No income statements for ${symbol}`, 404)
+  const yearEnds = points.flatMap(({ time }) =>
+    INCOME_FIELDS.some((field) => figures.get(field)?.yearEnds.has(time)) ? [time] : [],
+  )
+  return { symbol, currency, points, yearEnds }
 }
 
 async function searchQuotes(query: string): Promise<NonNullable<SearchResponse["quotes"]>> {
@@ -485,4 +569,5 @@ export const yahooProvider: DataProvider = {
   search,
   screen,
   bookValue,
+  earnings,
 }

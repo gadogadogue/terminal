@@ -3,6 +3,7 @@
 import { queryOptions } from "@tanstack/react-query"
 import type {
   BookValueHistory,
+  EarningsHistory,
   MarketSnapshot,
   PriceBasis,
   PriceHistory,
@@ -31,6 +32,13 @@ export function bookValueQuery(symbol: string) {
   return queryOptions({
     queryKey: ["book-value", symbol] as const,
     queryFn: () => getJson<BookValueHistory>(`/api/book-value?${new URLSearchParams({ symbol })}`),
+  })
+}
+
+export function earningsQuery(symbol: string) {
+  return queryOptions({
+    queryKey: ["earnings-per-share", symbol] as const,
+    queryFn: () => getJson<EarningsHistory>(`/api/earnings-per-share?${new URLSearchParams({ symbol })}`),
   })
 }
 

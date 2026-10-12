@@ -2,13 +2,14 @@
 
 import { useQuery } from "@tanstack/react-query"
 import { useMemo } from "react"
-import { buildValuation, type Valuation } from "@/lib/analytics/valuation"
+import { buildValuation, earningsOn, type EarningsBasis, type Valuation } from "@/lib/analytics/valuation"
 import { fxSymbol } from "@/lib/currency"
+import type { ValuationRatio } from "@/lib/instruments"
 import type { FetchRange, RangeKey } from "@/lib/ranges"
-import { bookValueQuery, historyQuery } from "./use-history"
+import { bookValueQuery, earningsQuery, historyQuery } from "./use-history"
 
 /**
- * Balance sheets go back about four years, so one five-year daily history
+ * Company reports go back about four years, so one five-year daily history
  * covers every range and switching between them never refetches.
  */
 const FETCH_RANGE: FetchRange = "5y"
@@ -17,24 +18,40 @@ export interface ValuationState {
   valuation: Valuation | null
   /** Name reported by the provider. */
   name: string | null
-  /** The trading currency, which price and book value are shown in. */
+  /** The trading currency, which price and the fundamental are shown in. */
   currency: string | null
-  /** Set when the accounts are in another currency and book value was converted. */
+  /** Set when the accounts are in another currency and the fundamental was converted. */
   reportingCurrency: string | null
-  /** The latest balance sheet shows no positive equity, so there is no P/BV. */
-  negativeEquity: boolean
+  /** The latest figure is negative equity (P/BV) or a loss (P/E), so there is no ratio. */
+  negative: boolean
   error: Error | null
   loading: boolean
 }
 
-export function useValuation(symbol: string | null, range: RangeKey): ValuationState {
+export function useValuation(
+  symbol: string | null,
+  ratio: ValuationRatio,
+  range: RangeKey,
+  /** How earnings per share are stated; only P/E uses it. */
+  basis: EarningsBasis,
+): ValuationState {
   const enabled = symbol != null
   const price = useQuery({ ...historyQuery(symbol ?? "", FETCH_RANGE, "price"), enabled })
-  const book = useQuery({ ...bookValueQuery(symbol ?? ""), enabled })
+  // P/BV divides the price by book value, P/E by earnings; only the one shown is fetched.
+  const book = useQuery({ ...bookValueQuery(symbol ?? ""), enabled: enabled && ratio === "pbv" })
+  const earnings = useQuery({ ...earningsQuery(symbol ?? ""), enabled: enabled && ratio === "pe" })
+  const reports = ratio === "pbv" ? book : earnings
+  const fundamental = useMemo(
+    () =>
+      ratio === "pbv"
+        ? book.data?.points
+        : earnings.data && earningsOn(basis, earnings.data.points, earnings.data.yearEnds),
+    [ratio, basis, book.data, earnings.data],
+  )
 
   // The FX need is only known once both report their currency.
   const currency = price.data?.currency ?? null
-  const accounts = book.data?.currency ?? null
+  const accounts = reports.data?.currency ?? null
   const reportingCurrency = currency && accounts && accounts !== currency ? accounts : null
   const fx = useQuery({
     ...historyQuery(reportingCurrency && currency ? fxSymbol(reportingCurrency, currency) : "", FETCH_RANGE),
@@ -42,12 +59,12 @@ export function useValuation(symbol: string | null, range: RangeKey): ValuationS
   })
 
   const valuation = useMemo(() => {
-    if (!price.data || !book.data || (reportingCurrency && !fx.data)) return null
+    if (!price.data || !fundamental || (reportingCurrency && !fx.data)) return null
     return buildValuation(
-      { price: price.data.points, book: book.data.points, fx: reportingCurrency ? fx.data!.points : null },
+      { price: price.data.points, fundamental, fx: reportingCurrency ? fx.data!.points : null },
       { range },
     )
-  }, [price.data, book.data, fx.data, reportingCurrency, range])
+  }, [price.data, fundamental, fx.data, reportingCurrency, range])
 
   const fxError =
     reportingCurrency && fx.error ? new Error(`No ${reportingCurrency}/${currency} rate: ${fx.error.message}`) : null
@@ -56,8 +73,8 @@ export function useValuation(symbol: string | null, range: RangeKey): ValuationS
     name: price.data?.name ?? null,
     currency,
     reportingCurrency,
-    negativeEquity: book.data != null && !((book.data.points.at(-1)?.value ?? 0) > 0),
-    error: price.error ?? book.error ?? fxError,
-    loading: enabled && (price.isPending || book.isPending || (reportingCurrency != null && fx.isPending)),
+    negative: fundamental != null && fundamental.length > 0 && !(fundamental[fundamental.length - 1].value > 0),
+    error: price.error ?? reports.error ?? fxError,
+    loading: enabled && (price.isPending || reports.isPending || (reportingCurrency != null && fx.isPending)),
   }
 }
