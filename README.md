@@ -14,10 +14,11 @@ one currency, from one start date:
 by P/BV, ROE, P/E, dividend yield, size and liquidity, then add the ones you
 like to the watchlist and compare them.
 
-**Valuation** answers one question about a stock's P/BV: did it move because
-of the price or because of book value? It plots price, book value per share
-and P/BV as percent change from one start date, or as values in the stock's
-currency with P/BV underneath, and splits the move between the two.
+**Valuation** answers one question about a stock's P/BV or P/E: did it move
+because of the price, or because of the book value or earnings under it? It
+plots price, the per-share figure and the ratio as percent change from one
+start date, or as values in the stock's currency with the ratio underneath,
+and splits the move between the two.
 
 There is **no database and no account**. Your watchlist lives in your browser
 and you keep it as a plain JSON file: export it, store it anywhere, import it
@@ -36,9 +37,10 @@ and you keep it as a plain JSON file: export it, store it anywhere, import it
 - A screener over the whole IDX: min/max filters on nine metrics, sectors,
   sortable columns, and presets (below book, cheap & profitable, Graham,
   high yield) as starting points
-- A P/BV chart per stock (click any P/BV in the screener): price, book value
-  per share and the ratio on one start date, with the share of the move that
-  came from each
+- A P/BV and a P/E chart per stock (click either ratio in the screener):
+  price, book value or earnings per share, and the ratio on one start date,
+  with the share of the move that came from each. Earnings can be the
+  trailing 12 months, full fiscal years only, or a 1-year or 3-year average
 - Light and dark themes
 
 ## Getting started
@@ -134,6 +136,25 @@ split-adjusted prices. Unlike Compare, this chart uses closes without
 dividends, since P/BV is about the price a share trades at. Book value in
 another currency is converted at each day's rate.
 
+For P/E the same endpoint gives net income: the year to each of about four
+year-ends, and the trailing 12 months to the latest quarter-end and the one
+a year before. Earnings per share is that income over the shares outstanding
+at the time, the same restated counts book value uses, so it can sit a
+little off the diluted EPS a company reports. For the other quarter-ends of
+the last three years Yahoo has only EPS and the average share count behind
+it. EPS alone is not usable: it is often left on the share count of its day
+(ten times too high before a 10-for-1 split) and is sometimes rounded to a
+cent or plain wrong. Multiplied by its share count it gives net income
+again, and those quarters are used only for companies where that product
+matches the reported net income, within 5%, on every date that has both.
+Other companies keep the year-ends and the two quarter-ends. The chart
+starts after the last 12 months that ended in a loss.
+
+Those trailing figures are the default. The chart can also keep full fiscal
+years only, average each figure with the others reported in the year before
+it, or average three fiscal years in a row (which leaves about two points of
+the four years the source has). P/E is the price over whichever is picked.
+
 **Why not TradingView data?** TradingView has no public data API, and
 scraping its feeds breaks its terms of use, which is a non-starter for an
 open-source project. This project does use TradingView's open-source
@@ -160,7 +181,8 @@ browser check.
 1. Implement `DataProvider` from `src/lib/providers/types.ts` (`history` and
    `search`), returning dates as `YYYY-MM-DD` in the exchange's timezone.
    `screen` is optional; without it the screener page reports that the
-   source has no screener.
+   source has no screener. So are `bookValue` and `earnings`, which the
+   valuation chart needs for P/BV and P/E.
 2. Register it in `src/lib/providers/index.ts`.
 3. Select it with the `DATA_PROVIDER` environment variable.
 

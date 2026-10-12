@@ -24,6 +24,9 @@ const COLUMNS = 4 + SCREEN_METRICS.length
 /** Metrics that divide by book value, which may have been converted. */
 const BOOK_BASED = new Set<string>(["pbv", "roe"])
 
+/** Ratios that link to the valuation chart, and what it sets the price against. */
+const BROKEN_DOWN = { pbv: "book value", pe: "earnings" }
+
 const isSigned = (metric: ScreenMetric) => "signed" in metric && metric.signed
 
 function formatMetric(value: number | null, metric: ScreenMetric): string {
@@ -225,11 +228,11 @@ function ResultRow({
             key={metric.key}
             className={cn("text-right tabular-nums last:pr-4", isSigned(metric) && signClass(value))}
           >
-            {metric.key === "pbv" && value != null ? (
+            {(metric.key === "pbv" || metric.key === "pe") && value != null ? (
               <Link
-                href={valuationHref(stock.symbol)}
-                title={converted ? undefined : "See whether the price or book value moved it"}
-                aria-label={`What moved ${stock.symbol}'s P/BV`}
+                href={valuationHref(stock.symbol, metric.key)}
+                title={converted ? undefined : `See whether the price or ${BROKEN_DOWN[metric.key]} moved it`}
+                aria-label={`What moved ${stock.symbol}'s ${metric.label}`}
                 className="rounded-sm underline decoration-muted-foreground/50 decoration-dotted underline-offset-4 hover:decoration-foreground hover:decoration-solid"
               >
                 {text}

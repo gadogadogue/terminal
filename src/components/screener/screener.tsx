@@ -159,7 +159,8 @@ export function Screener() {
             book value is converted at the latest rate. The source gets a few stocks wrong, and a P/E under 1 or an
             ROE in the hundreds usually means a unit mix-up, so check the annual report before acting. Add a stock
             with <span className="text-foreground">+</span> to compare its performance, or click its{" "}
-            <span className="text-foreground">P/BV</span> to see whether the price or book value moved it.
+            <span className="text-foreground">P/BV</span> or <span className="text-foreground">P/E</span> to see
+            whether the price or the accounts moved it.
           </p>
         </section>
       </main>

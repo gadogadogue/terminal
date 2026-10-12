@@ -30,9 +30,13 @@ export function lineDashOf(inst: Instrument, group: InstrumentGroup): LineDash {
 /** Symbols are passed straight to upstream URLs, so keep them conservative. */
 export const SYMBOL_PATTERN = /^[A-Za-z0-9.\-=^_]{1,24}$/
 
-/** A stock's P/BV chart. The symbol rides in the URL so any page can link to it. */
-export function valuationHref(symbol: string): string {
-  return `/valuation?${new URLSearchParams({ symbol })}`
+/** The ratios the valuation chart can take apart: price over book value, or over earnings. */
+export const VALUATION_RATIOS = ["pbv", "pe"] as const
+export type ValuationRatio = (typeof VALUATION_RATIOS)[number]
+
+/** A stock's valuation chart. Symbol and ratio ride in the URL so any page can link to it. */
+export function valuationHref(symbol: string, ratio: ValuationRatio = "pbv"): string {
+  return `/valuation?${new URLSearchParams({ symbol, ratio })}`
 }
 
 /** Stable identity, also used to de-duplicate lists. */

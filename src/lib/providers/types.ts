@@ -9,7 +9,7 @@ export interface PricePoint {
 /**
  * What a history's closes stand for. "total" folds dividends back in, which
  * is right for returns; "price" is what the stock traded at, which is right
- * for a ratio such as P/BV. Both are on today's share count.
+ * for a ratio such as P/BV or P/E. Both are on today's share count.
  */
 export const PRICE_BASES = ["total", "price"] as const
 export type PriceBasis = (typeof PRICE_BASES)[number]
@@ -40,6 +40,20 @@ export interface BookValueHistory {
   /** ISO 4217 code of `points`: the currency of the accounts, not always the trading currency. */
   currency: string
   points: PricePoint[]
+}
+
+/**
+ * Earnings per share over the 12 months to each period end the provider has,
+ * oldest first: net income over shares outstanding, on today's share count
+ * like book value. Negative when the company lost money.
+ */
+export interface EarningsHistory {
+  symbol: string
+  /** ISO 4217 code of `points`: the currency of the accounts, not always the trading currency. */
+  currency: string
+  points: PricePoint[]
+  /** The dates in `points` that close a fiscal year, where the 12 months are that year. */
+  yearEnds: string[]
 }
 
 export interface SearchResult {
@@ -102,8 +116,10 @@ export interface DataProvider {
   search(query: string): Promise<SearchResult[]>
   /** Every listed stock in the home market. Optional: the screener needs it. */
   screen?(): Promise<MarketSnapshot>
-  /** A company's book value over time. Optional: the valuation chart needs it. */
+  /** A company's book value over time. Optional: the valuation chart needs it for P/BV. */
   bookValue?(symbol: string): Promise<BookValueHistory>
+  /** A company's earnings over time. Optional: the valuation chart needs it for P/E. */
+  earnings?(symbol: string): Promise<EarningsHistory>
 }
 
 export class ProviderError extends Error {
