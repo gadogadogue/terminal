@@ -56,6 +56,107 @@ export interface EarningsHistory {
   yearEnds: string[]
 }
 
+/**
+ * What a named holder is. A company is any business or organisation that
+ * isn't in the business of investing, and a person an individual; together
+ * they are a company's insiders. An institution is a bank, insurer, pension
+ * fund or asset manager, and a fund is one pooled fund, usually run by an
+ * institution.
+ */
+export const HOLDER_KINDS = ["company", "person", "institution", "fund"] as const
+export type HolderKind = (typeof HOLDER_KINDS)[number]
+
+/** A holder's stake in another company than the one it is listed under. */
+export interface OtherHolding {
+  symbol: string
+  name: string
+  /** Share of that company held, as a fraction. */
+  percent: number
+  shares: number | null
+}
+
+/** One named owner of a company's shares. */
+export interface Holder {
+  name: string
+  kind: HolderKind
+  /** The trust or company a fund is registered under, when the provider names it. */
+  family?: string
+  /** A person's position at the company. */
+  role?: string
+  /** What the source itself calls this sort of holder: "Corporate", "Private Bank", "Mutual Funds". */
+  type?: string
+  /** Set where the source says whether the holder is a foreign investor. */
+  foreign?: boolean
+  /** Share of the company held, as a fraction. */
+  percent: number
+  shares: number | null
+  /** Market value of the stake, in the stock's trading currency. */
+  value: number | null
+  /** Change in the share count since the filing before, as a fraction. */
+  change: number | null
+  /** The date the stake was reported for, YYYY-MM-DD. */
+  reported: string | null
+  /**
+   * What else the holder owns, largest stake first. Only a source that lists
+   * a whole market's holders can tell, and only as far as its list goes.
+   */
+  elsewhere?: OtherHolding[]
+}
+
+/** What one holder did between two shareholder registers. */
+export interface HolderChange {
+  name: string
+  kind: HolderKind
+  type?: string
+  /** The dates of the two registers, YYYY-MM-DD. */
+  from: string
+  to: string
+  /**
+   * The stake on each date. Null where the holder was not on that register:
+   * under its threshold, not a holder at all, or recorded some other way.
+   */
+  before: { shares: number; percent: number } | null
+  after: { shares: number; percent: number } | null
+}
+
+/**
+ * Who owns a company. `insiders` and `institutions` are totals over every
+ * holder of that sort, named or not, so they say more than `holders` adds up
+ * to. Kinds overlap: an institution's stake includes the funds it runs.
+ */
+export interface Ownership {
+  symbol: string
+  name: string
+  /** ISO 4217 code of `price` and of each holder's `value`. */
+  currency: string
+  /** The latest share price, which stakes are valued at. */
+  price: number | null
+  /** Fraction held by insiders: founders, parent companies, the state, directors. */
+  insiders: number | null
+  /** Fraction held by institutions, their funds included. */
+  institutions: number | null
+  /** Named holders, largest first. */
+  holders: Holder[]
+  /**
+   * Set when holders come from a shareholder register, a full list of
+   * everyone above a threshold: the date it was drawn up, and what holders
+   * did between registers, newest first.
+   */
+  register?: { date: string; threshold: number; changes: HolderChange[] }
+}
+
+/** The shareholder registers the user has saved, as far as they could be read. */
+export interface RegisterStatus {
+  /** Changes whenever the saved files do. */
+  version: string
+  /** Where the files go, relative to the project folder. */
+  folder: string
+  /** Oldest first. */
+  registers: { date: string; file: string; holders: number; companies: number }[]
+  /** Files that are not a register, with what was wrong. */
+  failed: { file: string; message: string }[]
+}
+
 export interface SearchResult {
   symbol: string
   name: string
@@ -120,6 +221,8 @@ export interface DataProvider {
   bookValue?(symbol: string): Promise<BookValueHistory>
   /** A company's earnings over time. Optional: the valuation chart needs it for P/E. */
   earnings?(symbol: string): Promise<EarningsHistory>
+  /** A company's shareholders. Optional: the ownership network needs it. */
+  ownership?(symbol: string): Promise<Ownership>
 }
 
 export class ProviderError extends Error {

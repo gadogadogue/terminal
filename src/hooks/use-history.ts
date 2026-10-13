@@ -5,8 +5,10 @@ import type {
   BookValueHistory,
   EarningsHistory,
   MarketSnapshot,
+  Ownership,
   PriceBasis,
   PriceHistory,
+  RegisterStatus,
   SearchResult,
 } from "@/lib/providers/types"
 import type { FetchRange } from "@/lib/ranges"
@@ -39,6 +41,24 @@ export function earningsQuery(symbol: string) {
   return queryOptions({
     queryKey: ["earnings-per-share", symbol] as const,
     queryFn: () => getJson<EarningsHistory>(`/api/earnings-per-share?${new URLSearchParams({ symbol })}`),
+  })
+}
+
+/** The saved shareholder registers. Asked again on every visit: the user adds files while the app is open. */
+export function registerQuery() {
+  return queryOptions({
+    queryKey: ["register"] as const,
+    queryFn: () => getJson<RegisterStatus>("/api/register"),
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+  })
+}
+
+/** `register` is the version of the saved registers, so a new file means a new question and never a cached answer. */
+export function ownershipQuery(symbol: string, register: string) {
+  return queryOptions({
+    queryKey: ["shareholders", symbol, register] as const,
+    queryFn: () => getJson<Ownership>(`/api/shareholders?${new URLSearchParams({ symbol, register })}`),
   })
 }
 
