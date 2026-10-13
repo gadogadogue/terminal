@@ -22,15 +22,22 @@ import {
   type Split,
 } from "@/lib/analytics/ownership"
 import { CHART_CHROME, type ChartTheme } from "@/lib/chart-palette"
-import { formatShare } from "@/lib/format"
+import { formatDate, formatShare } from "@/lib/format"
 import { SYMBOL_PATTERN, isCompany, ownershipHref } from "@/lib/instruments"
-import { HOLDER_KINDS, type HolderKind } from "@/lib/providers/types"
+import { HOLDER_KINDS, type HolderKind, type Ownership as Owned, type RegisterStatus } from "@/lib/providers/types"
 import { cn } from "@/lib/utils"
-import { holderColor, KIND_LABELS, stockCode } from "./holder-kinds"
+import { ActivityTable } from "./activity-table"
+import { KIND_LABELS, stockCode, totalColor } from "./holder-kinds"
 import { HoldersTable } from "./holders-table"
 import { OwnershipNetwork } from "./ownership-network"
 
+/** Where IDX posts KSEI's monthly lists. */
+const IDX_ANNOUNCEMENTS = "https://www.idx.co.id/id/berita/pengumuman"
+const REGISTER_TITLE = "Pemegang Saham di atas 1% (KSEI)"
+
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+/** A threshold as it is said: 0.01 → "1%". */
+const plain = (fraction: number) => `${Number((fraction * 100).toFixed(2))}%`
 
 /** What the diagram holds, in a line under its title. */
 function summary(network: Network, sharedOnly: boolean): string {
@@ -64,7 +71,7 @@ export function Ownership() {
   const asked = SYMBOL_PATTERN.test(requested) && isCompany(requested) ? requested : null
   // A stock from outside the watchlist joins the diagram for as long as it is being looked at.
   const symbols = asked && !listed.includes(asked) ? [...listed, asked] : listed
-  const { ownerships, errors, loading } = useOwnership(symbols)
+  const { ownerships, errors, loading, register } = useOwnership(symbols)
 
   const network = useMemo(() => buildNetwork(ownerships, { kinds, sharedOnly }), [ownerships, kinds, sharedOnly])
   // Hold the last settled network while stocks load, so the diagram is laid out once and not once per answer.
@@ -100,6 +107,7 @@ export function Ownership() {
         ? "The source has no shareholders for these stocks."
         : null
   const waiting = loading && shown.stocks.length === 0
+  const insidersNamed = ownership?.holders.some((holder) => holder.kind === "company" || holder.kind === "person")
 
   return (
     <AppShell workspace={workspace} onWorkspaceChange={setWorkspace}>
@@ -191,7 +199,8 @@ export function Ownership() {
                       <>
                         Insiders hold {formatShare(split.insiders)}, institutions {formatShare(split.institutions)} and
                         everyone else {formatShare(split.others)}.
-                        {split.insiders >= 0.05 && !ownership?.holders.some((holder) => holder.kind === "insider") &&
+                        {split.insiders >= 0.05 &&
+                          !insidersNamed &&
                           " The source does not say who the insiders are, so the largest owners are missing from the names below."}
                       </>
                     ) : (
@@ -214,13 +223,30 @@ export function Ownership() {
                   </CardContent>
                 )}
               </Card>
+
+              {ownership?.register && <Activity ownership={ownership} status={register} theme={theme} />}
+
               <p className="px-1 text-xs leading-relaxed text-muted-foreground">
-                Names come from Yahoo Finance: up to ten institutions and ten funds that publish their portfolios,
-                most of them in the US, and directors and officers where they report their shares. Stakes under{" "}
-                {formatShare(MIN_STAKE)} are left out. An institution&apos;s stake includes the funds it runs, so
-                stakes overlap and don&apos;t add up to the totals. Insiders here means anyone tied to the company:
-                founders, a parent company, the state. They are counted in the total but mostly not named, and for
-                most IDX stocks they are the largest owners.
+                {ownership?.register ? (
+                  <>
+                    Holders of {plain(ownership.register.threshold)} and more are from KSEI&apos;s list of{" "}
+                    <span className="text-foreground">{formatDate(ownership.register.date)}</span>, which counts each
+                    investor&apos;s whole stake and says what sort of investor it is. Smaller holders are from Yahoo
+                    Finance: funds that publish their portfolios, most of them in the US. The totals at the top are
+                    Yahoo&apos;s too and count every insider and institution, named or not, so they can sit a little off
+                    what the names add up to.{" "}
+                  </>
+                ) : (
+                  <>
+                    Names come from Yahoo Finance: up to ten institutions and ten funds that publish their portfolios,
+                    most of them in the US, and directors and officers where they report their shares. An
+                    institution&apos;s stake includes the funds it runs, so stakes overlap and don&apos;t add up to
+                    the totals. Insiders here means anyone tied to the company: founders, a parent company, the
+                    state. They are counted in the total but mostly not named, and for most IDX stocks they are the
+                    largest owners.{" "}
+                  </>
+                )}
+                Stakes under {formatShare(MIN_STAKE)} are left out.
               </p>
             </>
           )}
@@ -267,6 +293,7 @@ export function Ownership() {
             A line joins a holder to each stock it owns, so a holder with several lines is one your stocks have in
             common. Click a stock to list its holders, or a holder to keep its lines lit.
           </p>
+          {register && <Registers status={register} />}
         </aside>
       </main>
 
@@ -286,8 +313,8 @@ export function Ownership() {
 /** Who holds the company, as one bar: the same three shares the ring around its node shows. */
 function SplitBar({ split, theme }: { split: Split; theme: ChartTheme }) {
   const parts = [
-    { label: "Insiders", share: split.insiders, color: holderColor("insider", theme) },
-    { label: "Institutions", share: split.institutions, color: holderColor("institution", theme) },
+    { label: "Insiders", share: split.insiders, color: totalColor("insiders", theme) },
+    { label: "Institutions", share: split.institutions, color: totalColor("institutions", theme) },
     { label: "Everyone else", share: split.others, color: CHART_CHROME[theme].baseline },
   ]
   return (
@@ -314,5 +341,73 @@ function SplitBar({ split, theme }: { split: Split; theme: ChartTheme }) {
         ))}
       </ul>
     </div>
+  )
+}
+
+/** What the stock's larger holders bought and sold, from one saved register to the next. */
+function Activity({ ownership, status, theme }: { ownership: Owned; status: RegisterStatus | null; theme: ChartTheme }) {
+  const { changes, threshold } = ownership.register!
+  const dates = status?.registers.map((saved) => saved.date) ?? []
+  const code = stockCode(ownership.symbol)
+  return (
+    <Card className="gap-0 rounded-2xl py-0">
+      <CardHeader className="border-b px-4 py-3">
+        <CardTitle>Insider activity</CardTitle>
+        <CardDescription className="text-xs">
+          What holders of {plain(threshold)} and more of {code} bought and sold between KSEI&apos;s monthly lists
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="px-0">
+        {changes.length > 0 ? (
+          <ActivityTable changes={changes} threshold={threshold} theme={theme} />
+        ) : (
+          <p className="px-4 py-6 text-center text-sm text-muted-foreground">
+            {dates.length < 2
+              ? "One list is saved. Save another month's to see what holders bought and sold in between."
+              : `No holder of ${plain(threshold)} or more of ${code} changed its stake between ${formatDate(dates[0])} and ${formatDate(dates.at(-1)!)}.`}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+/** Which of KSEI's lists are saved, and how to add one. */
+function Registers({ status }: { status: RegisterStatus }) {
+  const latest = status.registers.at(-1)
+  const earlier = status.registers.slice(0, -1)
+  return (
+    <Card className="gap-0 rounded-2xl py-0">
+      <CardHeader className="border-b px-4 py-3">
+        <CardTitle>IDX shareholder lists</CardTitle>
+        <CardDescription className="text-xs">
+          {latest ? `${count(status.registers.length, "month", "months")} saved` : "None saved yet"}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
+        {latest && (
+          <p>
+            <span className="font-medium text-foreground">{formatDate(latest.date)}</span> is the latest:{" "}
+            {latest.holders.toLocaleString("en-US")} holders in {latest.companies.toLocaleString("en-US")} companies.
+            {earlier.length > 0 && <> Before it: {earlier.map((saved) => formatDate(saved.date)).join(", ")}.</>}
+          </p>
+        )}
+        <p>
+          Once a month KSEI lists every holder of more than 1% of each IDX company. To {latest ? "add a month" : "use it"},
+          download <span className="text-foreground">{REGISTER_TITLE}</span> from the{" "}
+          <a href={IDX_ANNOUNCEMENTS} target="_blank" rel="noreferrer" className="underline underline-offset-2">
+            IDX announcements
+          </a>{" "}
+          and save the PDF in this project&apos;s <span className="font-medium text-foreground">{status.folder}</span>{" "}
+          folder. {latest ? "Each month saved shows" : "It names the owners of IDX stocks, and each further month shows"} what
+          holders bought and sold since the one before.
+        </p>
+        {status.failed.map((file) => (
+          <p key={file.file}>
+            <span className="font-medium text-foreground">{file.file}</span> could not be read. {file.message}
+          </p>
+        ))}
+      </CardContent>
+    </Card>
   )
 }

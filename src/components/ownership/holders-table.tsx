@@ -7,7 +7,8 @@ import type { ChartTheme } from "@/lib/chart-palette"
 import { formatAmount, formatDate, formatShare, formatShortPercent, signClass } from "@/lib/format"
 import { ownershipHref } from "@/lib/instruments"
 import { cn } from "@/lib/utils"
-import { holderColor, KIND_LABELS, stockCode } from "./holder-kinds"
+import { holderDetail, stockCode } from "./holder-kinds"
+import { HolderMark } from "./holder-mark"
 
 /** One stock's named holders: every link the diagram draws to it, as numbers. */
 export function HoldersTable({ rows, currency, theme }: { rows: HolderRow[]; currency: string; theme: ChartTheme }) {
@@ -20,7 +21,9 @@ export function HoldersTable({ rows, currency, theme }: { rows: HolderRow[]; cur
           <TableHead className="text-right text-muted-foreground">Shares</TableHead>
           <TableHead className="text-right text-muted-foreground">Value ({currency})</TableHead>
           <TableHead className="text-right text-muted-foreground">
-            <span title="How much the share count changed since the holder's filing before this one">Change</span>
+            <span title="How much the share count changed since the holder's filing, or the list, before this one">
+              Change
+            </span>
           </TableHead>
           <TableHead className="text-right text-muted-foreground">Reported</TableHead>
           <TableHead className="pr-4 text-muted-foreground">
@@ -33,17 +36,13 @@ export function HoldersTable({ rows, currency, theme }: { rows: HolderRow[]; cur
           <TableRow key={holder.id}>
             <TableCell className="pl-4">
               <div className="flex items-center gap-2.5">
-                <span
-                  className="size-2.5 shrink-0 rounded-full"
-                  style={{ background: holderColor(holder.kind, theme) }}
-                  aria-hidden
-                />
+                <HolderMark kind={holder.kind} theme={theme} />
                 <div className="min-w-0">
                   <div className="max-w-72 truncate font-medium" title={holder.name}>
                     {holder.name}
                   </div>
                   <div className="max-w-72 truncate text-xs text-muted-foreground">
-                    {[KIND_LABELS[holder.kind].one, holder.family ?? holding.role].filter(Boolean).join(" · ")}
+                    {holderDetail(holder.kind, holding)}
                   </div>
                 </div>
               </div>

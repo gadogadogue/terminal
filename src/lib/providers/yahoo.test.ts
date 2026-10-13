@@ -395,12 +395,13 @@ describe("yahoo ownership", () => {
       symbol: "BBCA.JK",
       name: "PT Bank Central Asia Tbk",
       currency: "IDR",
+      price: 9000,
       insiders: 0.608,
       institutions: 0.198,
       holders: [
         {
           name: "HARTONO ROBERT",
-          kind: "insider",
+          kind: "person",
           role: "Director",
           // Over every share class, not only the listed one.
           percent: 0.1,

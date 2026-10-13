@@ -17,12 +17,13 @@ const company = (symbol: string, holders: Holder[], insiders: number | null = 0.
   symbol,
   name: `${symbol} Tbk`,
   currency: "IDR",
+  price: null,
   insiders,
   institutions: 0.2,
   holders,
 })
 
-const ALL = { kinds: ["institution", "fund", "insider"], sharedOnly: false } as const
+const ALL = { kinds: ["company", "person", "institution", "fund"], sharedOnly: false } as const
 
 describe("buildNetwork", () => {
   it("makes one node of a holder that owns several stocks", () => {
@@ -65,12 +66,12 @@ describe("buildNetwork", () => {
     const network = buildNetwork(
       [
         company("TSLA", [
-          holder("MUSK ELON", 0.18, "insider"),
+          holder("MUSK ELON", 0.18, "person"),
           holder("Blackrock", 0.05, "institution"),
-          holder("A DIRECTOR", 0.0002, "insider"),
+          holder("A DIRECTOR", 0.0002, "person"),
         ]),
       ],
-      { kinds: ["insider"], sharedOnly: false },
+      { kinds: ["person"], sharedOnly: false },
     )
     expect(network.holders.map((h) => h.name)).toEqual(["MUSK ELON"])
     expect(network.stakes).toHaveLength(1)

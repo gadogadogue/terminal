@@ -21,10 +21,14 @@ start date, or as values in the stock's currency with the ratio underneath,
 and splits the move between the two.
 
 **Ownership** draws who holds the stocks in your watchlist as a network: each
-stock, the institutions, funds and insiders named as its holders, and a line
-for every stake. A holder that owns several of your stocks is one node, so
-what your stocks have in common shows as the nodes in the middle. A ring
-around each stock shows how much of it insiders and institutions hold.
+stock, the companies, individuals, institutions and funds named as its
+holders, and a line for every stake. A holder that owns several of your
+stocks is one node, so what your stocks have in common shows as the nodes in
+the middle. A ring around each stock shows how much of it insiders and
+institutions hold. For IDX stocks it reads the lists of shareholders above 1%
+that KSEI publishes each month, once you save them in a folder: they name
+the real owners, and from one month to the next they show which large
+holders bought and sold.
 
 There is **no database and no account**. Your watchlist lives in your browser
 and you keep it as a plain JSON file: export it, store it anywhere, import it
@@ -50,6 +54,8 @@ and you keep it as a plain JSON file: export it, store it anywhere, import it
 - A shareholder network over the watchlist: named holders by kind, the ones
   your stocks share, and a table of each stock's holders with their stake,
   share count, value and latest change
+- Insider activity for IDX stocks: what each holder of 1% and more bought or
+  sold between KSEI's monthly lists, and who joined or left them
 - Light and dark themes
 
 ## Getting started
@@ -62,6 +68,10 @@ npm run dev
 ```
 
 Open http://localhost:3000. No API keys are needed.
+
+To see who owns IDX stocks by name, save KSEI's monthly shareholder lists in
+`data/ksei/` (see [Shareholder lists](#shareholder-lists) below). Everything
+else works without them.
 
 | Script | What it does |
 | --- | --- |
@@ -176,10 +186,40 @@ are not added up, and stakes under 0.1% are left out.
 
 What it does not give is the names behind the insider total: a founder's
 holding company, a parent, the state. For most IDX stocks those are the
-largest owners, so the diagram shows them as a share of the ring and not as
-nodes. IDX and KSEI have published every holder above 1% since March 2026,
-but as a monthly PDF on a site that turns away server requests, so this
-project does not read it.
+largest owners, and Yahoo has no insider transactions for them either. The
+shareholder lists below fill that in.
+
+### Shareholder lists
+
+Since March 2026 KSEI, Indonesia's securities depository, lists every holder
+of more than 1% of each IDX company once a month, and IDX publishes the list
+as a PDF: about 7,200 holders in 950 companies, each with its share count,
+its percentage, whether it is local or foreign, and what sort of investor it
+is. The IDX site turns away requests from servers, so the app cannot fetch
+the list. You download it and the app reads it:
+
+1. Open the [IDX announcements](https://www.idx.co.id/id/berita/pengumuman)
+   and search for **Pemegang Saham di atas 1% (KSEI)**.
+2. Save the month's PDF in `data/ksei/`. Any file name works.
+3. Open the Ownership page. It lists the months it found.
+
+The latest list names each IDX stock's holders from 1% up, and Yahoo's
+smaller funds are kept below them. Every earlier month you save adds a row
+of insider activity per holder whose share count changed: bought, sold,
+joined the list or left it. A holder that joins or leaves usually crossed
+1%, but not always: the first lists left some holdings out that later ones
+count, so the page says "not listed" and does not guess. A holder whose name
+is spelled differently from one month to the next is matched by its words
+with "PT" and "Tbk" set aside, and failing that by an identical share count.
+
+The table is read from the text of the PDF by what each line says, since the
+page size, type size and column positions have all changed between months.
+Each file is parsed once and the result kept in `data/ksei/.cache/`, which
+is git-ignored and rebuilt from the PDFs. The PDFs themselves are kept in
+git, at about 7 MB a month. KSEI's words for an investor
+("Corporate", "Private Bank", "Mutual Funds", more than thirty by now) are
+kept as they are and sorted into four kinds for the diagram: companies,
+individuals, institutions and funds.
 
 **Why not TradingView data?** TradingView has no public data API, and
 scraping its feeds breaks its terms of use, which is a non-starter for an
@@ -209,7 +249,8 @@ browser check.
    `screen` is optional; without it the screener page reports that the
    source has no screener. So are `bookValue` and `earnings`, which the
    valuation chart needs for P/BV and P/E, and `ownership`, which the
-   shareholder network needs.
+   shareholder network needs. Saved shareholder lists are merged into
+   whatever the provider returns for IDX stocks.
 2. Register it in `src/lib/providers/index.ts`.
 3. Select it with the `DATA_PROVIDER` environment variable.
 
@@ -226,6 +267,7 @@ src/
   components/screener/              The screener
   components/valuation/             The valuation chart
   components/ownership/             The shareholder network
+data/ksei/                          KSEI shareholder lists you save (PDF)
 ```
 
 UI work follows `DESIGN.md` (monochrome shadcn/ui chrome, Geist type, color

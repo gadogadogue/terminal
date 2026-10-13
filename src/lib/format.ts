@@ -43,10 +43,15 @@ export function formatRatio(value: number | null | undefined): string {
 }
 
 const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 })
+const signedCompact = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+  signDisplay: "exceptZero",
+})
 
-/** 743_192_618_074_112 → "743.2T". */
-export function formatAmount(value: number | null | undefined): string {
-  return value == null || !Number.isFinite(value) ? "—" : compact.format(value)
+/** 743_192_618_074_112 → "743.2T", or "+743.2T" when signed. */
+export function formatAmount(value: number | null | undefined, signed = false): string {
+  return value == null || !Number.isFinite(value) ? "—" : (signed ? signedCompact : compact).format(value)
 }
 
 /** A value already in percent units: 12.34 → "+12.34%". */

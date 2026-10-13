@@ -687,7 +687,7 @@ async function ownership(symbol: string): Promise<Ownership> {
     return [
       {
         name: stake.name,
-        kind: "insider",
+        kind: "person",
         ...(stake.relation && { role: stake.relation }),
         percent: shares / outstanding,
         shares,
@@ -714,6 +714,7 @@ async function ownership(symbol: string): Promise<Ownership> {
     symbol,
     name: summary.price?.longName ?? summary.price?.shortName ?? symbol,
     currency,
+    price: money(price),
     insiders,
     institutions,
     holders,

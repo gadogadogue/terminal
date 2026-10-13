@@ -7,7 +7,8 @@ import { CHART_CHROME, type ChartTheme } from "@/lib/chart-palette"
 import { formatShare } from "@/lib/format"
 import type { HolderKind } from "@/lib/providers/types"
 import { cn } from "@/lib/utils"
-import { holderColor, KIND_LABELS, stockCode } from "./holder-kinds"
+import { holderColor, holderDetail, isSquare, KIND_LABELS, stockCode, totalColor } from "./holder-kinds"
+import { HolderMark } from "./holder-mark"
 
 /** A stock is a disc with a ring around it that shows who holds it. */
 const STOCK_RADIUS = 22
@@ -26,6 +27,11 @@ const RING_GAP = 2
 const scaled = (stake: number) => Math.sqrt(Math.min(stake, 0.5) / 0.5)
 const holderRadius = (stake: number) => 5 + 13 * scaled(stake)
 const linkWidth = (stake: number) => 1 + 4 * scaled(stake)
+/** The side of the square with the area of a circle of this radius, so both shapes read as the same stake. */
+const squareSide = (radius: number) => radius * Math.sqrt(Math.PI)
+/** How far a holder's mark reaches from its center: a square's corners stick out past the circle's edge. */
+const holderReach = (holder: HolderNode) =>
+  isSquare(holder.kind) ? squareSide(holderRadius(holder.stake)) / Math.SQRT2 : holderRadius(holder.stake)
 
 const LABEL_SIZE = 11
 const MAX_LABEL = 30
@@ -44,19 +50,19 @@ function ringArc(from: number, to: number): string {
   return `M${point(from)}A${RING_RADIUS},${RING_RADIUS} 0 ${to - from > 0.5 ? 1 : 0} 1 ${point(to)}`
 }
 
-/** The parts of a stock's ring: insiders, then institutions, in the colors those holders are drawn in. */
+/** The parts of a stock's ring: insiders, then institutions, in the hues those holders are drawn in. */
 function ringParts(stock: StockNode, theme: ChartTheme): { path: string; color: string }[] {
   const split = ownershipSplit(stock)
   if (!split) return []
   // Half the gap comes off each end of a part, as a fraction of the ring's length.
   const trim = RING_GAP / 2 / (2 * Math.PI * RING_RADIUS)
-  const parts: [from: number, to: number, kind: HolderKind][] = [
-    [0, split.insiders, "insider"],
-    [split.insiders, split.insiders + split.institutions, "institution"],
+  const parts: [from: number, to: number, total: "insiders" | "institutions"][] = [
+    [0, split.insiders, "insiders"],
+    [split.insiders, split.insiders + split.institutions, "institutions"],
   ]
-  return parts.flatMap(([from, to, kind]) =>
+  return parts.flatMap(([from, to, total]) =>
     // A part too short to show between its gaps is left out.
-    to - from > trim * 4 ? [{ path: ringArc(from + trim, to - trim), color: holderColor(kind, theme) }] : [],
+    to - from > trim * 4 ? [{ path: ringArc(from + trim, to - trim), color: totalColor(total, theme) }] : [],
   )
 }
 
@@ -103,7 +109,7 @@ export function OwnershipNetwork({
     const nodes = [
       ...network.stocks.map((stock) => ({ id: stock.symbol, radius: STOCK_ROOM, hub: true })),
       // One pixel more than drawn, for the ring in the surface color around each holder.
-      ...network.holders.map((holder) => ({ id: holder.id, radius: holderRadius(holder.stake) + 1 })),
+      ...network.holders.map((holder) => ({ id: holder.id, radius: holderReach(holder) + 1 })),
     ]
     const links = network.stakes.map((stake) => ({ source: stake.holder, target: stake.symbol }))
     const at = layoutNetwork(nodes, links, { width, height })
@@ -222,6 +228,8 @@ export function OwnershipNetwork({
             {network.holders.map((holder) => {
               const { x, y } = layout.at.get(holder.id)!
               const radius = holderRadius(holder.stake)
+              const reach = holderReach(holder)
+              const side = squareSide(radius)
               const toggle = () => setPinned((current) => (current === holder.id ? null : holder.id))
               return (
                 <g
@@ -241,10 +249,23 @@ export function OwnershipNetwork({
                   {...lights(holder.id)}
                 >
                   {/* Small circles are hard to hit, so the target is wider than the mark. */}
-                  <circle r={Math.max(radius + 4, 12)} fill="transparent" />
-                  <circle r={radius} fill={holderColor(holder.kind, theme)} className="stroke-card" strokeWidth={2} />
+                  <circle r={Math.max(reach + 4, 12)} fill="transparent" />
+                  {isSquare(holder.kind) ? (
+                    <rect
+                      x={-side / 2}
+                      y={-side / 2}
+                      width={side}
+                      height={side}
+                      rx={2}
+                      fill={holderColor(holder.kind, theme)}
+                      className="stroke-card"
+                      strokeWidth={2}
+                    />
+                  ) : (
+                    <circle r={radius} fill={holderColor(holder.kind, theme)} className="stroke-card" strokeWidth={2} />
+                  )}
                   <circle
-                    r={radius + 3}
+                    r={reach + 3}
                     fill="none"
                     strokeWidth={1.5}
                     className={cn(
@@ -347,9 +368,7 @@ export function OwnershipNetwork({
               <>
                 <div className="font-medium">{activeHolder.name}</div>
                 <div className="text-muted-foreground">
-                  {[KIND_LABELS[activeHolder.kind].one, activeHolder.family ?? stakesOf(activeHolder.id)[0]?.holding.role]
-                    .filter(Boolean)
-                    .join(" · ")}
+                  {holderDetail(activeHolder.kind, stakesOf(activeHolder.id)[0].holding)}
                 </div>
                 <ul className="mt-1.5 flex flex-col gap-0.5">
                   {stakesOf(activeHolder.id).map((stake) => (
@@ -372,13 +391,13 @@ export function OwnershipNetwork({
         </li>
         {kinds.map((kind) => (
           <li key={kind} className="flex items-center gap-1.5" title={KIND_LABELS[kind].hint}>
-            <span className="size-2.5 rounded-full" style={{ background: holderColor(kind, theme) }} aria-hidden />
+            <HolderMark kind={kind} theme={theme} />
             {KIND_LABELS[kind].one}
           </li>
         ))}
         <li>
-          Ring around a stock: held by <Swatch color={holderColor("insider", theme)} /> insiders and{" "}
-          <Swatch color={holderColor("institution", theme)} /> institutions
+          Ring around a stock: held by <Swatch color={totalColor("insiders", theme)} /> insiders and{" "}
+          <Swatch color={totalColor("institutions", theme)} /> institutions
         </li>
         <li>Larger circles and thicker lines are larger stakes</li>
       </ul>
@@ -394,8 +413,8 @@ function Swatch({ color }: { color: string }) {
 function StockTip({ stock, holders, theme }: { stock: StockNode; holders: number; theme: ChartTheme }) {
   const split = ownershipSplit(stock)
   const rows = split && [
-    { label: "Insiders", share: split.insiders, color: holderColor("insider", theme) },
-    { label: "Institutions", share: split.institutions, color: holderColor("institution", theme) },
+    { label: "Insiders", share: split.insiders, color: totalColor("insiders", theme) },
+    { label: "Institutions", share: split.institutions, color: totalColor("institutions", theme) },
     { label: "Everyone else", share: split.others, color: CHART_CHROME[theme].baseline },
   ]
   return (
