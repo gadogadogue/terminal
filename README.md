@@ -25,10 +25,12 @@ stock, the companies, individuals, institutions and funds named as its
 holders, and a line for every stake. A holder that owns several of your
 stocks is one node, so what your stocks have in common shows as the nodes in
 the middle. A ring around each stock shows how much of it insiders and
-institutions hold. For IDX stocks it reads the lists of shareholders above 1%
-that KSEI publishes each month, once you save them in a folder: they name
-the real owners, and from one month to the next they show which large
-holders bought and sold.
+institutions hold. The picture handles like Obsidian's graph view: drag a
+node and what it is tied to comes along, drag the background to move the
+view, and zoom in to read more names. For IDX stocks it reads the lists of
+shareholders above 1% that KSEI publishes each month, once you save them in
+a folder: they name the real owners, and from one month to the next they
+show which large holders bought and sold.
 
 There is **no database and no account**. Your watchlist lives in your browser
 and you keep it as a plain JSON file: export it, store it anywhere, import it

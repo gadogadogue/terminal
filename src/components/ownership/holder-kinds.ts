@@ -25,7 +25,8 @@ export const KIND_LABELS: Record<HolderKind, { one: string; many: string; hint: 
  * network any two nodes can end up side by side, so the three hues were
  * validated against one another, not only as neighbors, and the palette
  * carries no more than three that way. Companies and individuals are both a
- * company's insiders: they share a hue and differ in shape.
+ * company's insiders and share a hue; what kind a holder is, its tooltip
+ * and its row in the table say.
  */
 const SLOTS = { insiders: 2, institutions: 0, funds: 1 }
 const KIND_SLOTS: Record<HolderKind, number> = {
@@ -43,9 +44,6 @@ export function holderColor(kind: HolderKind, theme: ChartTheme): string {
 export function totalColor(total: "insiders" | "institutions", theme: ChartTheme): string {
   return seriesColor(SLOTS[total], theme)
 }
-
-/** Companies are drawn as squares, every other holder as a circle. */
-export const isSquare = (kind: HolderKind) => kind === "company"
 
 /** What sort of holder this is, in the source's words where it has them: "Private Bank · Foreign". */
 export function holderDetail(kind: HolderKind, holding: Pick<Holder, "type" | "family" | "role" | "foreign">): string {

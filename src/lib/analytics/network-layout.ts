@@ -27,7 +27,18 @@ export interface LayoutLink {
   target: string
 }
 
-/** Empty space kept between two nodes, and between a node and the frame. */
+/** A network held in place by forces: they settled it when it was laid out, and move it again while a node is dragged. */
+export interface NetworkLayout {
+  /** Where each node's center is, in the order the nodes were given. */
+  readonly x: readonly number[]
+  readonly y: readonly number[]
+  /** Holds a node at a point, as while it is dragged; `null` lets it go. */
+  hold(node: number, at: Point | null): void
+  /** Moves every node one step. False once the picture is at rest again. */
+  step(): boolean
+}
+
+/** Empty space kept between two nodes, and between the picture and the frame it is fitted to. */
 const NODE_GAP = 8
 const FRAME_MARGIN = 12
 
@@ -38,8 +49,15 @@ const ALPHA_END = 0.001
 const VELOCITY_KEPT = 0.6
 /** Successive turns by this angle never line up, so nodes that start together fan out evenly. */
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
+/** A held node warms the picture to this `alpha` so the rest gives way to it, by this share of the gap a step. */
+const HELD_ALPHA = 0.3
+const WARMING = 0.2
+/** The weakest push that moves a node of a picture at rest: what a link pulls with when it is this many pixels off its length. */
+const GRIP = 0.5
 
-/** How far a wide or tall frame may stretch the picture from the round shape forces settle into. */
+/** A weak pull to the middle keeps unlinked groups from drifting off. */
+const GRAVITY = 0.06
+/** How far a wide or tall frame may stretch the picture from the round shape even forces settle into. */
 const MAX_STRETCH = 1.5
 /** A small network is enlarged to use the frame, but not so far that its links turn into spokes. */
 const MAX_ZOOM = 1.25
@@ -47,11 +65,12 @@ const MAX_ZOOM = 1.25
 /**
  * A force-directed layout: linked nodes pull together, all nodes push apart,
  * and none overlap. Hubs start on a ring and every other node next to the
- * hubs it is linked to, so the result is settled by the input alone.
+ * hubs it is linked to, so the result is settled by the input alone. The
+ * frame gives the picture its proportions, not its place: `fitView` shows
+ * it in the frame.
  */
-export function layoutNetwork(nodes: LayoutNode[], links: LayoutLink[], size: Size): Map<string, Point> {
+export function layoutNetwork(nodes: LayoutNode[], links: LayoutLink[], size: Size): NetworkLayout {
   const count = nodes.length
-  if (count === 0) return new Map()
   const index = new Map(nodes.map((node, i) => [node.id, i]))
   const pairs = links.flatMap(({ source, target }) => {
     const s = index.get(source)
@@ -71,19 +90,23 @@ export function layoutNetwork(nodes: LayoutNode[], links: LayoutLink[], size: Si
   const cy = size.height / 2
   const radius = nodes.map((node) => node.radius)
   // The usual yardstick for a force layout: the spacing that would spread the nodes evenly over the frame.
-  const spacing = Math.sqrt((size.width * size.height) / count)
+  const spacing = Math.sqrt((size.width * size.height) / Math.max(count, 1))
   const linkLength = Math.min(Math.max(spacing * 0.5, 24), 84)
   const charge = nodes.map((node) => linkLength * (node.hub ? 16 : 3))
+  // The middle pulls harder across a frame's short side than along its long one, so the picture takes the frame's shape.
+  const stretch = Math.min(Math.max(Math.sqrt(size.width / size.height), 1 / MAX_STRETCH), MAX_STRETCH)
+  const gravityX = GRAVITY / stretch
+  const gravityY = GRAVITY * stretch
 
   const x = new Array<number>(count).fill(cx)
   const y = new Array<number>(count).fill(cy)
   const hubs = nodes.flatMap((node, i) => (node.hub ? [i] : []))
   const ring = hubs.length > 1 ? Math.min(size.width, size.height) * 0.3 : 0
   hubs.forEach((i, n) => {
-    // Two hubs start side by side, the way frames are usually wider than tall.
-    const angle = Math.PI + (2 * Math.PI * n) / hubs.length
-    x[i] = cx + ring * Math.cos(angle)
-    y[i] = cy + ring * Math.sin(angle)
+    // Two hubs start side by side in a wide frame, and one above the other in a tall one.
+    const angle = (stretch < 1 ? -Math.PI / 2 : Math.PI) + (2 * Math.PI * n) / hubs.length
+    x[i] = cx + ring * stretch * Math.cos(angle)
+    y[i] = cy + (ring / stretch) * Math.sin(angle)
   })
   nodes.forEach((node, i) => {
     if (node.hub) return
@@ -96,15 +119,17 @@ export function layoutNetwork(nodes: LayoutNode[], links: LayoutLink[], size: Si
     y[i] = ay + reach * Math.sin(i * GOLDEN_ANGLE)
   })
 
-  /** Pushes overlapping nodes apart, the smaller one further. */
+  const held = new Map<number, Point>()
+
+  /** Pushes overlapping nodes apart, the smaller one further and a held one not at all. */
   const separate = () => {
     for (let i = 0; i < count; i++) {
       for (let j = i + 1; j < count; j++) {
         let dx = x[j] - x[i]
         let dy = y[j] - y[i]
-        let distance = Math.hypot(dx, dy)
         const apart = radius[i] + radius[j] + NODE_GAP
-        if (distance >= apart) continue
+        if (dx * dx + dy * dy >= apart * apart) continue
+        let distance = Math.sqrt(dx * dx + dy * dy)
         if (distance < 1e-6) {
           // Nodes on one spot have no direction to part in; give them one.
           dx = Math.cos((i + j) * GOLDEN_ANGLE)
@@ -112,7 +137,7 @@ export function layoutNetwork(nodes: LayoutNode[], links: LayoutLink[], size: Si
           distance = 1
         }
         const push = (apart - distance) / distance
-        const share = radius[j] ** 2 / (radius[i] ** 2 + radius[j] ** 2)
+        const share = held.has(i) ? 0 : held.has(j) ? 1 : radius[j] ** 2 / (radius[i] ** 2 + radius[j] ** 2)
         x[i] -= dx * push * share
         y[i] -= dy * push * share
         x[j] += dx * push * (1 - share)
@@ -123,14 +148,12 @@ export function layoutNetwork(nodes: LayoutNode[], links: LayoutLink[], size: Si
 
   const vx = new Array<number>(count).fill(0)
   const vy = new Array<number>(count).fill(0)
-  const cooling = 1 - ALPHA_END ** (1 / TICKS)
-  let alpha = 1
-  for (let tick = 0; tick < TICKS; tick++) {
-    alpha -= alpha * cooling
+  /** Adds to each node's speed what the forces ask of it. */
+  const accelerate = (alpha: number) => {
     for (const [s, t] of pairs) {
       const dx = x[t] + vx[t] - x[s] - vx[s]
       const dy = y[t] + vy[t] - y[s] - vy[s]
-      const distance = Math.hypot(dx, dy) || 1
+      const distance = Math.sqrt(dx * dx + dy * dy) || 1
       const rest = radius[s] + radius[t] + linkLength
       // A node with many links is held by all of them, so each pulls it less and its lighter end more.
       const pull = ((distance - rest) / distance) * alpha * (1 / Math.min(degree[s], degree[t]))
@@ -150,53 +173,117 @@ export function layoutNetwork(nodes: LayoutNode[], links: LayoutLink[], size: Si
         vx[j] += dx * push * charge[i]
         vy[j] += dy * push * charge[i]
       }
-      // A weak pull to the middle keeps unlinked groups from drifting off.
-      vx[i] += (cx - x[i]) * 0.06 * alpha
-      vy[i] += (cy - y[i]) * 0.06 * alpha
+      vx[i] += (cx - x[i]) * gravityX * alpha
+      vy[i] += (cy - y[i]) * gravityY * alpha
     }
+  }
+
+  /**
+   * Cooling stops a picture before its forces are done with it, the more so
+   * the larger it is, and warming it again for a drag would set all of it
+   * adrift. So where a picture comes to rest, what the forces still ask of
+   * each node is taken off from then on, and a push weaker than `GRIP` moves
+   * nothing. The picture at rest stays as it is: a dragged node moves what
+   * it is tied to and what it runs into, and nothing else.
+   */
+  const askedX = new Array<number>(count).fill(0)
+  const askedY = new Array<number>(count).fill(0)
+  let rested = false
+  const rest = () => {
+    vx.fill(0)
+    vy.fill(0)
+    accelerate(HELD_ALPHA)
     for (let i = 0; i < count; i++) {
+      askedX[i] = vx[i] / HELD_ALPHA
+      askedY[i] = vy[i] / HELD_ALPHA
+    }
+    vx.fill(0)
+    vy.fill(0)
+    rested = true
+  }
+
+  const fromX = new Array<number>(count).fill(0)
+  const fromY = new Array<number>(count).fill(0)
+  const tick = (alpha: number) => {
+    for (let i = 0; rested && i < count; i++) {
+      fromX[i] = vx[i]
+      fromY[i] = vy[i]
+    }
+    accelerate(alpha)
+    for (let i = 0; i < count; i++) {
+      if (rested) {
+        const pushX = vx[i] - fromX[i] - askedX[i] * alpha
+        const pushY = vy[i] - fromY[i] - askedY[i] * alpha
+        const push = Math.sqrt(pushX * pushX + pushY * pushY)
+        const kept = push > GRIP * alpha ? 1 - (GRIP * alpha) / push : 0
+        vx[i] = fromX[i] + pushX * kept
+        vy[i] = fromY[i] + pushY * kept
+      }
       x[i] += vx[i] *= VELOCITY_KEPT
       y[i] += vy[i] *= VELOCITY_KEPT
+    }
+    for (const [i, at] of held) {
+      x[i] = at.x
+      y[i] = at.y
+      vx[i] = vy[i] = 0
     }
     separate()
   }
 
-  // Forces settle into a round shape. Stretch it toward the frame's, then zoom to fit.
-  const stretch = Math.min(Math.max(Math.sqrt(size.width / size.height), 1 / MAX_STRETCH), MAX_STRETCH)
-  for (let i = 0; i < count; i++) {
-    x[i] = cx + (x[i] - cx) * stretch
-    y[i] = cy + (y[i] - cy) / stretch
+  const cooling = 1 - ALPHA_END ** (1 / TICKS)
+  let alpha = 1
+  for (let n = 0; n < TICKS; n++) {
+    alpha -= alpha * cooling
+    tick(alpha)
   }
-  for (let pass = 0; pass < 8; pass++) separate()
+  rest()
 
-  const edge = (sign: 1 | -1, at: number[]) => Math.max(...at.map((v, i) => sign * v + radius[i]))
-  const left = -edge(-1, x)
-  const right = edge(1, x)
-  const top = -edge(-1, y)
-  const bottom = edge(1, y)
-  const zoom = Math.min(
-    (size.width - 2 * FRAME_MARGIN) / Math.max(right - left, 1),
-    (size.height - 2 * FRAME_MARGIN) / Math.max(bottom - top, 1),
-    MAX_ZOOM,
-  )
-  for (let i = 0; i < count; i++) {
-    x[i] = cx + (x[i] - (left + right) / 2) * zoom
-    y[i] = cy + (y[i] - (top + bottom) / 2) * zoom
+  return {
+    x,
+    y,
+    hold(node, at) {
+      if (at) held.set(node, at)
+      else held.delete(node)
+    },
+    step() {
+      const target = held.size > 0 ? HELD_ALPHA : 0
+      alpha += (target - alpha) * (target > alpha ? WARMING : cooling)
+      tick(alpha)
+      if (held.size > 0 || alpha > ALPHA_END) return true
+      rest()
+      return false
+    },
   }
-  // Zooming out to fit brings nodes closer than their sizes allow.
-  if (zoom < 1) for (let pass = 0; pass < 8; pass++) separate()
-
-  const within = (value: number, room: number, span: number) =>
-    Math.min(Math.max(value, FRAME_MARGIN + room), Math.max(span - FRAME_MARGIN - room, FRAME_MARGIN + room))
-  return new Map(
-    nodes.map((node, i) => [node.id, { x: within(x[i], radius[i], size.width), y: within(y[i], radius[i], size.height) }]),
-  )
 }
 
-/** A drawn node: where its label must stay clear of. */
+/** A drawn node: where a label must stay clear of. */
 export interface Circle extends Point {
   id: string
   radius: number
+}
+
+/** How a picture is looked at: everything in it is drawn `zoom` times its size, then moved by `x` and `y`. */
+export interface View extends Point {
+  zoom: number
+}
+
+const LABEL_HEIGHT = 14
+const LABEL_GAP = 4
+
+/** The view that shows a whole picture in the middle of a frame, with room under it for the lowest node's label. */
+export function fitView(circles: Circle[], size: Size): View {
+  if (circles.length === 0) return { x: 0, y: 0, zoom: 1 }
+  const left = Math.min(...circles.map((c) => c.x - c.radius))
+  const right = Math.max(...circles.map((c) => c.x + c.radius))
+  const top = Math.min(...circles.map((c) => c.y - c.radius))
+  const bottom = Math.max(...circles.map((c) => c.y + c.radius))
+  const height = size.height - LABEL_GAP - LABEL_HEIGHT
+  const zoom = Math.min(
+    (size.width - 2 * FRAME_MARGIN) / Math.max(right - left, 1),
+    (height - 2 * FRAME_MARGIN) / Math.max(bottom - top, 1),
+    MAX_ZOOM,
+  )
+  return { x: size.width / 2 - (zoom * (left + right)) / 2, y: height / 2 - (zoom * (top + bottom)) / 2, zoom }
 }
 
 export interface LabelRequest {
@@ -204,65 +291,56 @@ export interface LabelRequest {
   id: string
   /** The label's width in pixels, as measured for its text. */
   width: number
-  /** What the node is drawn next to, if anything: the label goes on its far side when it can. */
-  away?: Point
+  /** Show the label whatever it runs into: it names something the picture can't do without. */
+  keep?: boolean
 }
 
-/** A label's place: `x` is where the text starts, ends or centers, per `anchor`; `y` is its middle. */
-export interface LabelPlace extends Point {
-  anchor: "start" | "middle" | "end"
-}
+export type LabelSide = "under" | "over"
 
-const LABEL_HEIGHT = 14
-const LABEL_GAP = 4
+/** Where a node's label goes: centered under it, or over it. The point is the label's middle. */
+export function labelPoint(node: Circle, side: LabelSide = "under"): Point {
+  const reach = node.radius + LABEL_GAP + LABEL_HEIGHT / 2
+  return { x: node.x, y: side === "under" ? node.y + reach : node.y - reach }
+}
 
 /**
- * Labels as many nodes as fit, in the order asked. A label sits beside its
- * node, or under or over it, wherever it stays inside the frame and clear of
- * other nodes and of labels placed before it. One that fits nowhere is left
- * out, never clipped or moved off its node.
+ * The nodes to label and the side of each its label goes on: as many as
+ * fit, in the order asked. A label sits under its node, or over it where
+ * there is no room under. It has to be inside the frame and clear of other
+ * nodes and of the labels before it; one that isn't is left out, never
+ * clipped or moved off its node.
  */
-export function placeLabels(requests: LabelRequest[], circles: Circle[], size: Size): Map<string, LabelPlace> {
+export function placeLabels(requests: LabelRequest[], circles: Circle[], size: Size): Map<string, LabelSide> {
   const byId = new Map(circles.map((circle) => [circle.id, circle]))
-  const placed = new Map<string, LabelPlace>()
+  const placed = new Map<string, LabelSide>()
   const taken: { left: number; top: number; right: number; bottom: number }[] = []
 
-  for (const { id, width, away } of requests) {
+  for (const { id, width, keep } of requests) {
     const node = byId.get(id)
     if (!node || placed.has(id)) continue
-    const reach = node.radius + LABEL_GAP
-    const beside = (side: 1 | -1) => ({
-      place: { x: node.x + side * reach, y: node.y, anchor: side === 1 ? ("start" as const) : ("end" as const) },
-      left: side === 1 ? node.x + reach : node.x - reach - width,
-      top: node.y - LABEL_HEIGHT / 2,
-    })
-    const stacked = (side: 1 | -1) => ({
-      place: { x: node.x, y: node.y + side * (reach + LABEL_HEIGHT / 2), anchor: "middle" as const },
-      left: node.x - width / 2,
-      top: side === 1 ? node.y + reach : node.y - reach - LABEL_HEIGHT,
-    })
-    const from = away ?? { x: size.width / 2, y: size.height / 2 }
-    const sideways = node.x >= from.x ? 1 : -1
-    const upright = node.y >= from.y ? 1 : -1
-    const options = [beside(sideways), beside(-sideways as 1 | -1), stacked(upright), stacked(-upright as 1 | -1)]
-
-    for (const { place, left, top } of options) {
-      const box = { left, top, right: left + width, bottom: top + LABEL_HEIGHT }
-      if (box.left < 0 || box.top < 0 || box.right > size.width || box.bottom > size.height) continue
+    const boxOn = (side: LabelSide) => {
+      const middle = labelPoint(node, side)
+      const left = middle.x - width / 2
+      const top = middle.y - LABEL_HEIGHT / 2
+      return { left, top, right: left + width, bottom: top + LABEL_HEIGHT }
+    }
+    const sides: LabelSide[] = ["under", "over"]
+    const side = sides.find((side) => {
+      const box = boxOn(side)
+      if (box.left < 0 || box.top < 0 || box.right > size.width || box.bottom > size.height) return false
       if (taken.some((other) => box.left < other.right && other.left < box.right && box.top < other.bottom && other.top < box.bottom)) {
-        continue
+        return false
       }
-      const covers = circles.some((circle) => {
+      return !circles.some((circle) => {
         if (circle.id === id) return false
         const dx = circle.x - Math.min(Math.max(circle.x, box.left), box.right)
         const dy = circle.y - Math.min(Math.max(circle.y, box.top), box.bottom)
         return dx * dx + dy * dy < circle.radius ** 2
       })
-      if (covers) continue
-      placed.set(id, place)
-      taken.push(box)
-      break
-    }
+    })
+    if (!side && !keep) continue
+    placed.set(id, side ?? "under")
+    taken.push(boxOn(side ?? "under"))
   }
   return placed
 }

@@ -291,7 +291,8 @@ export function Ownership() {
           </Card>
           <p className="px-1 text-xs leading-relaxed text-muted-foreground">
             A line joins a holder to each stock it owns, so a holder with several lines is one your stocks have in
-            common. Click a stock to list its holders, or a holder to keep its lines lit.
+            common. Click a stock to list its holders, or a holder to keep its lines lit. Drag a node to move it and
+            the background to move the view; pinch, or scroll with Ctrl held, to zoom in on more names.
           </p>
           {register && <Registers status={register} />}
         </aside>
