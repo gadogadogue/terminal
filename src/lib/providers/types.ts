@@ -66,6 +66,15 @@ export interface EarningsHistory {
 export const HOLDER_KINDS = ["company", "person", "institution", "fund"] as const
 export type HolderKind = (typeof HOLDER_KINDS)[number]
 
+/** A holder's stake in another company than the one it is listed under. */
+export interface OtherHolding {
+  symbol: string
+  name: string
+  /** Share of that company held, as a fraction. */
+  percent: number
+  shares: number | null
+}
+
 /** One named owner of a company's shares. */
 export interface Holder {
   name: string
@@ -87,6 +96,11 @@ export interface Holder {
   change: number | null
   /** The date the stake was reported for, YYYY-MM-DD. */
   reported: string | null
+  /**
+   * What else the holder owns, largest stake first. Only a source that lists
+   * a whole market's holders can tell, and only as far as its list goes.
+   */
+  elsewhere?: OtherHolding[]
 }
 
 /** What one holder did between two shareholder registers. */

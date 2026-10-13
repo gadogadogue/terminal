@@ -1,7 +1,14 @@
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import { parseRegister, REGISTER_THRESHOLD, registerOwnership, type PageText, type Register } from "./ksei-register"
+import {
+  parseRegister,
+  REGISTER_THRESHOLD,
+  registerOwnership,
+  registerPortfolios,
+  type PageText,
+  type Register,
+} from "./ksei-register"
 import { ProviderError, type DataProvider, type Ownership } from "./types"
 
 /**
@@ -32,6 +39,14 @@ const PDFJS = "node_modules/pdfjs-dist/legacy/build/pdf.mjs"
 
 /** IDX symbols are the company's code with the exchange's suffix: "BBCA.JK". */
 const HOME_SYMBOL = /^([A-Z0-9]{3,6})\.JK$/
+const homeSymbol = (code: string) => `${code}.JK`
+
+/**
+ * Counted up whenever the answers built from the files change shape. It is
+ * part of the files' fingerprint, which the route's cache, the browser's and
+ * an open page's all go by, so every answer in the old shape is left behind.
+ */
+const ANSWER_FORMAT = 2
 
 interface SavedFile {
   name: string
@@ -145,11 +160,11 @@ export async function loadRegisters(): Promise<Registers> {
   }
 }
 
-/** A short fingerprint of the saved files. */
+/** A short fingerprint of the saved files and of the shape of what is answered from them. */
 function registerVersion(files: SavedFile[]): string {
   let hash = 5381
   for (const char of files.map((file) => file.key).join("|")) hash = (hash * 33 + char.charCodeAt(0)) >>> 0
-  return `${files.length}-${hash.toString(36)}`
+  return `${ANSWER_FORMAT}.${files.length}-${hash.toString(36)}`
 }
 
 /** The fingerprint alone, which takes no parsing: for telling whether cached answers still hold. */
@@ -162,6 +177,8 @@ export async function currentRegisterVersion(): Promise<string> {
  * register, everyone the register names. The register is the record from 1%
  * up, so the provider keeps only its smaller holders there, mostly foreign
  * funds. A stock the provider knows nothing of can still be on the register.
+ * The register lists every IDX company, so it also tells what else each of
+ * its holders owns there.
  */
 export async function shareholders(provider: DataProvider, symbol: string): Promise<Ownership> {
   const code = HOME_SYMBOL.exec(symbol.toUpperCase())?.[1]
@@ -173,12 +190,20 @@ export async function shareholders(provider: DataProvider, symbol: string): Prom
   ])
   const known = base instanceof Error ? null : base
   const listed = code && saved ? registerOwnership(saved.registers, code, known?.price ?? null) : null
-  if (!listed) {
+  if (!code || !saved || !listed) {
     if (base instanceof Error) throw base
     return base
   }
 
   const of = (kinds: string[]) => listed.holders.reduce((sum, holder) => sum + (kinds.includes(holder.kind) ? holder.percent : 0), 0)
+  // The holders are from one register, and so is what else they own.
+  const portfolios = registerPortfolios(saved.registers.find((register) => register.date === listed.date)!, code)
+  const registered = listed.holders.map((holder) => {
+    const others = portfolios.get(holder.name)
+    if (!others) return holder
+    const elsewhere = others.map((row) => ({ symbol: homeSymbol(row.code), name: row.issuer, percent: row.percent, shares: row.shares }))
+    return { ...holder, elsewhere }
+  })
   return {
     symbol,
     name: known?.name ?? listed.name,
@@ -187,7 +212,7 @@ export async function shareholders(provider: DataProvider, symbol: string): Prom
     // Without the provider's totals, the named holders are the least that each side holds.
     insiders: known?.insiders ?? of(["company", "person"]),
     institutions: known?.institutions ?? of(["institution", "fund"]),
-    holders: [...listed.holders, ...(known?.holders.filter((holder) => holder.percent < REGISTER_THRESHOLD) ?? [])].sort(
+    holders: [...registered, ...(known?.holders.filter((holder) => holder.percent < REGISTER_THRESHOLD) ?? [])].sort(
       (a, b) => b.percent - a.percent,
     ),
     register: { date: listed.date, threshold: REGISTER_THRESHOLD, changes: listed.changes },

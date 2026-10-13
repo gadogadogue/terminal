@@ -229,6 +229,30 @@ export function registerHolders(register: Register, code: string): Map<string, R
   return holders
 }
 
+/**
+ * What else a company's holders own: each investor the register names for
+ * the company, by its name there, with its stakes in the other companies on
+ * the register, largest first. An investor with no other stake is left out.
+ */
+export function registerPortfolios(register: Register, code: string): Map<string, RegisterRow[]> {
+  const names = new Map([...registerHolders(register, code)].map(([key, row]) => [key, row.investor]))
+  const stakes = new Map<string, Map<string, RegisterRow>>()
+  for (const row of register.rows) {
+    const key = holderKey(row.investor)
+    if (row.code === code || !names.has(key)) continue
+    const held = stakes.get(key) ?? new Map<string, RegisterRow>()
+    stakes.set(key, held)
+    const listed = held.get(row.code)
+    if (!listed) held.set(row.code, { ...row })
+    else {
+      // Shares held on screen and on paper are listed apart.
+      listed.shares += row.shares
+      listed.percent += row.percent
+    }
+  }
+  return new Map([...stakes].map(([key, held]) => [names.get(key)!, [...held.values()].sort((a, b) => b.percent - a.percent)]))
+}
+
 /** What a company's holders did between an older register and a newer one, largest move first. */
 export function registerChanges(older: Register, newer: Register, code: string): HolderChange[] {
   const before = registerHolders(older, code)

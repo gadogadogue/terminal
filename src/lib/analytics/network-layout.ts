@@ -64,8 +64,8 @@ const MAX_ZOOM = 1.25
 
 /**
  * A force-directed layout: linked nodes pull together, all nodes push apart,
- * and none overlap. Hubs start on a ring and every other node next to the
- * hubs it is linked to, so the result is settled by the input alone. The
+ * and none overlap. Hubs start on a ring and every other node next to what
+ * it is linked to, so the result is settled by the input alone. The
  * frame gives the picture its proportions, not its place: `fitView` shows
  * it in the frame.
  */
@@ -110,13 +110,17 @@ export function layoutNetwork(nodes: LayoutNode[], links: LayoutLink[], size: Si
   })
   nodes.forEach((node, i) => {
     if (node.hub) return
-    const anchors = neighbors[i].filter((j) => nodes[j].hub)
+    const byHubs = neighbors[i].filter((j) => nodes[j].hub)
+    // A node linked to no hub starts by the nodes before it that it is linked to: those have a place already.
+    const anchors = byHubs.length ? byHubs : neighbors[i].filter((j) => j < i)
     const ax = anchors.length ? anchors.reduce((sum, j) => sum + x[j], 0) / anchors.length : cx
     const ay = anchors.length ? anchors.reduce((sum, j) => sum + y[j], 0) / anchors.length : cy
-    // Beside its one hub, or between the several it links.
+    // Beside its one anchor, or between the several it links.
     const reach = anchors.length === 1 ? radius[anchors[0]] + radius[i] + linkLength : radius[i] + NODE_GAP
-    x[i] = ax + reach * Math.cos(i * GOLDEN_ANGLE)
-    y[i] = ay + reach * Math.sin(i * GOLDEN_ANGLE)
+    // Around a hub, or on the side of any other node that faces away from the middle, where there is room.
+    const angle = byHubs.length ? i * GOLDEN_ANGLE : Math.atan2(ay - cy, ax - cx) + ((i * GOLDEN_ANGLE) % Math.PI) - Math.PI / 2
+    x[i] = ax + reach * Math.cos(angle)
+    y[i] = ay + reach * Math.sin(angle)
   })
 
   const held = new Map<number, Point>()

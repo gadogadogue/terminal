@@ -16,7 +16,13 @@ import {
   type Size,
   type View,
 } from "@/lib/analytics/network-layout"
-import { ownershipSplit, type HolderNode, type OwnershipNetwork, type StockNode } from "@/lib/analytics/ownership"
+import {
+  ownershipSplit,
+  type HolderNode,
+  type OwnershipNetwork,
+  type Stake,
+  type StockNode,
+} from "@/lib/analytics/ownership"
 import { CHART_CHROME, type ChartTheme } from "@/lib/chart-palette"
 import { formatShare } from "@/lib/format"
 import type { HolderKind } from "@/lib/providers/types"
@@ -30,6 +36,10 @@ const RING_RADIUS = STOCK_RADIUS + 4
 const RING_WIDTH = 3
 /** The room a stock takes up, ring included. */
 const STOCK_ROOM = RING_RADIUS + RING_WIDTH / 2 + 1
+/** A stock from outside the ones asked for is a smaller dot with no ring: the picture is not about it. */
+const OUTSIDE_RADIUS = 5
+const stockRadius = (stock: StockNode) => (stock.outside ? OUTSIDE_RADIUS : STOCK_RADIUS)
+const stockRoom = (stock: StockNode) => (stock.outside ? OUTSIDE_RADIUS + 1 : STOCK_ROOM)
 /** The surface-colored gap between two parts of a ring. */
 const RING_GAP = 2
 
@@ -65,7 +75,7 @@ const clamp = (value: number, low: number, high: number) => Math.min(Math.max(va
 
 /** Taller with more to draw, and taller still where a narrow screen leaves less width for it. */
 function heightFor(width: number, nodes: number): number {
-  const height = Math.min(Math.max(320 + nodes * 5, 380), 620)
+  const height = Math.min(Math.max(320 + nodes * 5, 380), 720)
   return width > 0 && width < 560 ? Math.max(height, Math.min(Math.round(width * 1.4), 560)) : height
 }
 
@@ -100,7 +110,7 @@ function ringParts(stock: StockNode, theme: ChartTheme): { path: string; color: 
 interface Scene {
   size: Size
   forces: NetworkLayout
-  /** Every node, stocks first and then holders, as the forces number them. */
+  /** Every node as the forces number them: the stocks asked for, then holders, then the stocks from outside. */
   ids: string[]
   index: Map<string, number>
   /** The room each node takes, and how wide its label is. */
@@ -288,15 +298,17 @@ export function OwnershipNetwork({
     const font = getComputedStyle(container).fontFamily
     const observer = new ResizeObserver(([entry]) => setFrame({ width: Math.round(entry.contentRect.width), font }))
     observer.observe(container)
-    // The wheel scrolls the page as anywhere else. A pinch, or the wheel with Ctrl or ⌘ held, zooms the picture
-    // and not the page, which only a listener that isn't passive can ask for.
+    // Over the picture the wheel zooms it, about the point under the pointer, and the page stays where it is,
+    // which only a listener that isn't passive can ask for.
     const onWheel = (e: WheelEvent) => {
       const scene = sceneRef.current
-      if (!scene || !(e.ctrlKey || e.metaKey)) return
+      if (!scene) return
       e.preventDefault()
       const box = container.getBoundingClientRect()
-      // A notch of a wheel is some hundred pixels or three lines, a pinch a few pixels at a time.
-      const turns = clamp(-e.deltaY * (e.deltaMode === 1 ? 0.33 : 0.01), -0.25, 0.25)
+      // A notch of a wheel is some hundred pixels or three lines. A pinch comes as a wheel with Ctrl held, a few
+      // pixels at a time, and counts for ten times as much.
+      const step = (e.deltaMode === 1 ? 0.05 : 0.002) * (e.ctrlKey ? 10 : 1)
+      const turns = clamp(-e.deltaY * step, -0.25, 0.25)
       scene.view = zoomedView(scene, 2 ** turns, { x: e.clientX - box.left, y: e.clientY - box.top })
       scene.glide = null
       paint(scene)
@@ -311,6 +323,9 @@ export function OwnershipNetwork({
   const width = frame?.width ?? 0
   const font = frame?.font
   const height = heightFor(width, network.stocks.length + network.holders.length)
+  /** The stocks asked for, and the ones that are here because a holder also owns them. */
+  const asked = useMemo(() => network.stocks.filter((stock) => !stock.outside), [network])
+  const outside = useMemo(() => network.stocks.filter((stock) => stock.outside), [network])
   const chrome = CHART_CHROME[theme]
 
   /** What each node is linked to, both ways. */
@@ -334,12 +349,21 @@ export function OwnershipNetwork({
     const svg = svgRef.current!
     if (width === 0 || !font) return
     const size = { width, height }
-    const ids = [...network.stocks.map((stock) => stock.symbol), ...network.holders.map((holder) => holder.id)]
+    // The stocks asked for are what the picture is arranged around; a stock from outside hangs from its holders.
+    const ids = [
+      ...asked.map((stock) => stock.symbol),
+      ...network.holders.map((holder) => holder.id),
+      ...outside.map((stock) => stock.symbol),
+    ]
     const index = new Map(ids.map((id, i) => [id, i]))
-    // One pixel more than drawn, for the ring in the surface color around each holder.
-    const radius = [...network.stocks.map(() => STOCK_ROOM), ...network.holders.map((holder) => holderRadius(holder.stake) + 1)]
+    const radius = [
+      ...asked.map(stockRoom),
+      // One pixel more than drawn, for the ring in the surface color around each holder.
+      ...network.holders.map((holder) => holderRadius(holder.stake) + 1),
+      ...outside.map(stockRoom),
+    ]
     const forces = layoutNetwork(
-      ids.map((id, i) => ({ id, radius: radius[i], hub: i < network.stocks.length })),
+      ids.map((id, i) => ({ id, radius: radius[i], hub: i < asked.length })),
       network.stakes.map((stake) => ({ source: stake.holder, target: stake.symbol })),
       size,
     )
@@ -364,8 +388,9 @@ export function OwnershipNetwork({
       index,
       radius,
       labelWidth: [
-        ...network.stocks.map((stock) => widthOf(stockCode(stock.symbol), 600)),
+        ...asked.map((stock) => widthOf(stockCode(stock.symbol), 600)),
         ...network.holders.map((holder) => widthOf(shortName(holder.name), 400)),
+        ...outside.map((stock) => widthOf(stockCode(stock.symbol), 400)),
       ],
       view: { x: 0, y: 0, zoom: 1 },
       camera: svg.querySelector<SVGGElement>("[data-camera]")!,
@@ -392,20 +417,25 @@ export function OwnershipNetwork({
       cancelAnimationFrame(scene.frame)
       sceneRef.current = null
     }
-  }, [network, width, height, font])
+  }, [network, asked, outside, width, height, font])
 
   // After every render: which labels come first and where the tooltip belongs follow what is lit and selected.
   useLayoutEffect(() => {
     const scene = sceneRef.current
     if (!scene) return
-    // Stocks are always named. Then labels go to what is being looked at, to what ties stocks together, and to
-    // the selected stock's holders.
+    // The stocks asked for are always named. Then labels go to what is being looked at, to what ties stocks
+    // together, to the selected stock's holders, to the stocks from outside, and to every other holder.
     const rank = (holder: HolderNode) =>
-      lit?.has(holder.id) ? 0 : holder.stocks > 1 ? 1 : selected && linked.get(holder.id)?.has(selected) ? 2 : 3
+      lit?.has(holder.id) ? 0 : holder.stocks > 1 ? 1 : selected && linked.get(holder.id)?.has(selected) ? 2 : 4
     const request = (id: string) => ({ id, width: scene.labelWidth[scene.index.get(id)!] })
     scene.wanted = [
-      ...network.stocks.map((stock) => ({ ...request(stock.symbol), keep: true })),
-      ...[...network.holders].sort((a, b) => rank(a) - rank(b)).map((holder) => request(holder.id)),
+      ...asked.map((stock) => ({ ...request(stock.symbol), keep: true })),
+      ...[
+        ...network.holders.map((holder) => ({ id: holder.id, rank: rank(holder) })),
+        ...outside.map((stock) => ({ id: stock.symbol, rank: lit?.has(stock.symbol) ? 0 : 3 })),
+      ]
+        .sort((a, b) => a.rank - b.rank)
+        .map(({ id }) => request(id)),
     ]
     scene.tip = tipRef.current && active ? { box: tipRef.current, node: scene.index.get(active)! } : null
     paint(scene)
@@ -487,6 +517,10 @@ export function OwnershipNetwork({
       .map((stake) => `${formatShare(stake.holding.percent)} of ${stockCode(stake.symbol)}`)
       .join(", ")}.`
   const describeStock = (stock: StockNode) => {
+    if (stock.outside) {
+      const owners = stakesOf(stock.symbol).map((stake) => `${formatShare(stake.holding.percent)} by ${stake.holding.name}`)
+      return `${stockCode(stock.symbol)}, ${stock.name}. Held ${owners.join(", ")}. Show all its holders.`
+    }
     const split = ownershipSplit(stock)
     const held = split
       ? ` Insiders hold ${formatShare(split.insiders)}, institutions ${formatShare(split.institutions)}.`
@@ -533,7 +567,7 @@ export function OwnershipNetwork({
           width={width}
           height={height}
           role="group"
-          aria-label={`Network of ${network.stocks.length} stocks and ${network.holders.length} holders. Each stock's holders are listed in the table below.`}
+          aria-label={`Network of ${asked.length} stocks and ${network.holders.length} holders${outside.length > 0 ? `, with ${outside.length} other stocks those holders own` : ""}. Each stock's holders are listed in the table below.`}
           // A swipe up or down still scrolls the page on a touch screen.
           className={cn("block touch-pan-y select-none", dragging ? "cursor-grabbing" : "cursor-grab")}
           onPointerDown={onPointerDown}
@@ -622,15 +656,17 @@ export function OwnershipNetwork({
                   onKeyDown={onKey(() => onSelect(stock.symbol))}
                   {...lights(stock.symbol)}
                 >
+                  {/* Small dots are hard to hit, so the target is wider than the mark. */}
+                  <circle r={Math.max(stockRoom(stock) + 4, 10)} fill="transparent" />
                   {/* Keeps links from running under the ring. */}
-                  <circle r={STOCK_ROOM} className="fill-card" />
-                  <circle r={RING_RADIUS} fill="none" stroke={chrome.grid} strokeWidth={RING_WIDTH} />
+                  <circle r={stockRoom(stock)} className="fill-card" />
+                  {!stock.outside && <circle r={RING_RADIUS} fill="none" stroke={chrome.grid} strokeWidth={RING_WIDTH} />}
                   {ringParts(stock, theme).map((part) => (
                     <path key={part.path} d={part.path} fill="none" stroke={part.color} strokeWidth={RING_WIDTH} />
                   ))}
-                  <circle r={STOCK_RADIUS} className="fill-foreground" />
+                  <circle r={stockRadius(stock)} className={stock.outside ? "fill-muted-foreground" : "fill-foreground"} />
                   <circle
-                    r={STOCK_ROOM + 2.5}
+                    r={stockRoom(stock) + 2.5}
                     fill="none"
                     strokeWidth={1.5}
                     className={cn(
@@ -651,9 +687,12 @@ export function OwnershipNetwork({
                 <text
                   textAnchor="middle"
                   dominantBaseline="central"
-                  fontWeight={600}
+                  fontWeight={stock.outside ? undefined : 600}
                   opacity={dimmed(stock.symbol)}
-                  className="fill-foreground stroke-card transition-opacity"
+                  className={cn(
+                    "stroke-card transition-opacity",
+                    stock.outside && !lit?.has(stock.symbol) ? "fill-muted-foreground" : "fill-foreground",
+                  )}
                 >
                   {stockCode(stock.symbol)}
                 </text>
@@ -716,7 +755,10 @@ export function OwnershipNetwork({
                 </ul>
               </>
             )}
-            {activeStock && <StockTip stock={activeStock} holders={stakesOf(activeStock.symbol).length} theme={theme} />}
+            {activeStock?.outside && <OutsideTip stock={activeStock} stakes={stakesOf(activeStock.symbol)} />}
+            {activeStock && !activeStock.outside && (
+              <StockTip stock={activeStock} holders={stakesOf(activeStock.symbol).length} theme={theme} />
+            )}
           </div>
         )}
       </div>
@@ -725,6 +767,11 @@ export function OwnershipNetwork({
         <li className="flex items-center gap-1.5">
           <span className="size-2.5 rounded-full bg-foreground" aria-hidden /> Stock
         </li>
+        {outside.length > 0 && (
+          <li className="flex items-center gap-1.5" title="Not one of the stocks asked for. Click it to see who else holds it">
+            <span className="size-2.5 rounded-full bg-muted-foreground" aria-hidden /> Other stock a holder owns
+          </li>
+        )}
         {keyed.map((entry) => (
           <li
             key={entry[0]}
@@ -748,6 +795,25 @@ export function OwnershipNetwork({
 /** A short stroke in a ring part's color, set in a line of text. */
 function Swatch({ color }: { color: string }) {
   return <span className="inline-block h-1 w-3 rounded-full align-middle" style={{ background: color }} aria-hidden />
+}
+
+/** A stock from outside the ones asked for: all that is known of it is which holders led to it. */
+function OutsideTip({ stock, stakes }: { stock: StockNode; stakes: Stake[] }) {
+  return (
+    <>
+      <div className="font-medium">{stock.name}</div>
+      <div className="text-muted-foreground">{stock.symbol}</div>
+      <ul className="mt-1.5 flex flex-col gap-0.5">
+        {stakes.map((stake) => (
+          <li key={stake.holder} className="flex items-baseline gap-2">
+            <span className="font-medium tabular-nums">{formatShare(stake.holding.percent)}</span>
+            <span className="text-muted-foreground">held by {stake.holding.name}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-1.5 text-muted-foreground">Click to see all its holders</div>
+    </>
+  )
 }
 
 function StockTip({ stock, holders, theme }: { stock: StockNode; holders: number; theme: ChartTheme }) {

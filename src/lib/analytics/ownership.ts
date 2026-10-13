@@ -12,6 +12,8 @@ export interface NetworkOptions {
   kinds: readonly HolderKind[]
   /** Keep only holders that own two or more of the stocks. */
   sharedOnly: boolean
+  /** Add the other stocks the holders own, as far as their source lists them. */
+  elsewhere?: boolean
 }
 
 /** A company in the network, identified by its symbol. */
@@ -21,6 +23,12 @@ export interface StockNode {
   /** Fractions of the company held by all insiders and all institutions, named or not. */
   insiders: number | null
   institutions: number | null
+  /**
+   * Set for a stock that was not asked for and is here because a holder in
+   * the network also owns it. Its own holders are not known: only the ones
+   * that led to it are linked.
+   */
+  outside?: true
 }
 
 /** One owner, however many of the stocks it holds. */
@@ -29,9 +37,9 @@ export interface HolderNode {
   name: string
   kind: HolderKind
   family?: string
-  /** Its largest stake in any of the stocks, as a fraction of that company. */
+  /** Its largest stake in any of the stocks asked for, as a fraction of that company. */
   stake: number
-  /** How many of the stocks it holds. */
+  /** How many of the stocks asked for it holds. */
   stocks: number
 }
 
@@ -43,6 +51,7 @@ export interface Stake {
 }
 
 export interface OwnershipNetwork {
+  /** The stocks asked for, then the ones from outside. */
   stocks: StockNode[]
   /** Holders of the most stocks first, then the largest stakes. */
   holders: HolderNode[]
@@ -57,8 +66,12 @@ export interface OwnershipNetwork {
 const holderId = ({ kind, family, name }: Holder) =>
   ["holder", kind, family ?? "", name].map((part) => part.trim().replace(/\s+/g, " ").toLowerCase()).join(":")
 
-/** Links every stock to its named holders; a holder of several stocks is one node that ties them together. */
-export function buildNetwork(ownerships: Ownership[], { kinds, sharedOnly }: NetworkOptions): OwnershipNetwork {
+/**
+ * Links every stock to its named holders; a holder of several stocks is one
+ * node that ties them together. With `elsewhere`, each holder is also linked
+ * to whatever other stocks it owns.
+ */
+export function buildNetwork(ownerships: Ownership[], { kinds, sharedOnly, elsewhere }: NetworkOptions): OwnershipNetwork {
   const stocks: StockNode[] = []
   const nodes = new Map<string, HolderNode>()
   const stakes = new Map<string, Stake>()
@@ -85,11 +98,33 @@ export function buildNetwork(ownerships: Ownership[], { kinds, sharedOnly }: Net
     node.stake = Math.max(node.stake, holding.percent)
   }
 
+  const kept = new Set([...nodes.values()].flatMap((node) => (!sharedOnly || node.stocks > 1 ? [node.id] : [])))
+  const asked = [...stakes.values()].filter((stake) => kept.has(stake.holder))
+
+  const outside = new Map<string, StockNode>()
+  const further = new Map<string, Stake>()
+  for (const { holder, holding } of elsewhere ? asked : []) {
+    for (const other of holding.elsewhere ?? []) {
+      const key = `${holder}\n${other.symbol}`
+      if (other.percent < MIN_STAKE || further.has(key) || stocks.some((stock) => stock.symbol === other.symbol)) continue
+      if (!outside.has(other.symbol)) {
+        outside.set(other.symbol, { symbol: other.symbol, name: other.name, insiders: null, institutions: null, outside: true })
+      }
+      // The same holder, with what is known of this stake: its size, and neither its value nor how it moved.
+      const { name, kind, family, type, foreign, reported } = holding
+      const stake = { percent: other.percent, shares: other.shares, value: null, change: null, reported }
+      further.set(key, {
+        holder,
+        symbol: other.symbol,
+        holding: { name, kind, ...(family && { family }), ...(type && { type }), ...(foreign != null && { foreign }), ...stake },
+      })
+    }
+  }
+
   const holders = [...nodes.values()]
-    .filter((node) => !sharedOnly || node.stocks > 1)
+    .filter((node) => kept.has(node.id))
     .sort((a, b) => b.stocks - a.stocks || b.stake - a.stake || a.id.localeCompare(b.id))
-  const kept = new Set(holders.map((node) => node.id))
-  return { stocks, holders, stakes: [...stakes.values()].filter((stake) => kept.has(stake.holder)) }
+  return { stocks: [...stocks, ...outside.values()], holders, stakes: [...asked, ...further.values()] }
 }
 
 /** A stock's holder in the network, with the other stocks that holder owns. */

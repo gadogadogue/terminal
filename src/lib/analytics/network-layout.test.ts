@@ -76,6 +76,21 @@ describe("layoutNetwork", () => {
     expect(Math.max(distance(shared, a), distance(shared, b))).toBeLessThan(distance(a, b))
   })
 
+  it("puts a node that hangs from another by it, on the side away from the hub", () => {
+    const { nodes, links } = star(2, 6)
+    for (let n = 0; n < 5; n++) {
+      nodes.push({ id: `far${n}`, radius: 12 })
+      links.push({ source: "leaf0-0", target: `far${n}` })
+    }
+    const at = places(nodes, layoutNetwork(nodes, links, SIZE))
+    const [hub, other, leaf] = [at.get("hub0")!, at.get("hub1")!, at.get("leaf0-0")!]
+    for (let n = 0; n < 5; n++) {
+      const far = at.get(`far${n}`)!
+      expect(distance(far, leaf)).toBeLessThan(distance(far, other))
+      expect(distance(far, hub)).toBeGreaterThan(distance(leaf, hub))
+    }
+  })
+
   it("centers a lone node, ignores links to nodes it wasn't given, and handles nothing at all", () => {
     const layout = layoutNetwork([{ id: "only", radius: 30, hub: true }], [{ source: "ghost", target: "only" }], SIZE)
     expect([layout.x[0], layout.y[0]]).toEqual([450, 240])

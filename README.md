@@ -30,7 +30,10 @@ node and what it is tied to comes along, drag the background to move the
 view, and zoom in to read more names. For IDX stocks it reads the lists of
 shareholders above 1% that KSEI publishes each month, once you save them in
 a folder: they name the real owners, and from one month to the next they
-show which large holders bought and sold.
+show which large holders bought and sold. Those lists cover every IDX
+company, so the network also draws the other stocks your stocks' holders
+own, as smaller grey dots. Click one and it loads with its own holders, and
+with what they own in turn, so you can follow ownership across the market.
 
 There is **no database and no account**. Your watchlist lives in your browser
 and you keep it as a plain JSON file: export it, store it anywhere, import it
@@ -54,8 +57,8 @@ and you keep it as a plain JSON file: export it, store it anywhere, import it
   with the share of the move that came from each. Earnings can be the
   trailing 12 months, full fiscal years only, or a 1-year or 3-year average
 - A shareholder network over the watchlist: named holders by kind, the ones
-  your stocks share, and a table of each stock's holders with their stake,
-  share count, value and latest change
+  your stocks share, the other IDX stocks they own, and a table of each
+  stock's holders with their stake, share count, value and latest change
 - Insider activity for IDX stocks: what each holder of 1% and more bought or
   sold between KSEI's monthly lists, and who joined or left them
 - Light and dark themes
@@ -206,9 +209,11 @@ the list. You download it and the app reads it:
 3. Open the Ownership page. It lists the months it found.
 
 The latest list names each IDX stock's holders from 1% up, and Yahoo's
-smaller funds are kept below them. Every earlier month you save adds a row
-of insider activity per holder whose share count changed: bought, sold,
-joined the list or left it. A holder that joins or leaves usually crossed
+smaller funds are kept below them. It also says what else each of those
+holders owns 1% or more of, which is where the network's grey dots come
+from. Every earlier month you save adds a row of insider activity per
+holder whose share count changed: bought, sold, joined the list or left
+it. A holder that joins or leaves usually crossed
 1%, but not always: the first lists left some holdings out that later ones
 count, so the page says "not listed" and does not guess. A holder whose name
 is spelled differently from one month to the next is matched by its words

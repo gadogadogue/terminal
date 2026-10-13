@@ -105,6 +105,52 @@ describe("buildNetwork", () => {
   })
 })
 
+describe("buildNetwork with the holders' other stocks", () => {
+  const other = (symbol: string, percent: number) => ({ symbol, name: `${symbol} Tbk`, percent, shares: percent * 1e9 })
+  const norway = (percent: number, elsewhere: ReturnType<typeof other>[]): Holder => ({
+    ...holder("GOVERNMENT OF NORWAY", percent, "institution"),
+    elsewhere,
+  })
+  const ownerships = [
+    company("BBCA.JK", [
+      norway(0.0101, [other("BBRI.JK", 0.012), other("ASII.JK", 0.031), other("TINY.JK", 0.0005)]),
+      { ...holder("EUPAC Fund", 0.004), elsewhere: [other("UNVR.JK", 0.02)] },
+    ]),
+    company("BBRI.JK", [norway(0.012, [other("BBCA.JK", 0.0101), other("ASII.JK", 0.031)])]),
+  ]
+
+  it("leaves them out unless asked", () => {
+    expect(buildNetwork(ownerships, ALL).stocks.map((s) => s.symbol)).toEqual(["BBCA.JK", "BBRI.JK"])
+  })
+
+  it("adds each once, after the stocks asked for, linked to the holders that led to it", () => {
+    const network = buildNetwork(ownerships, { ...ALL, elsewhere: true })
+    // A stock asked for is not added again, and a stake too small to matter adds nothing.
+    expect(network.stocks.map((s) => [s.symbol, s.outside ?? false])).toEqual([
+      ["BBCA.JK", false],
+      ["BBRI.JK", false],
+      ["ASII.JK", true],
+      ["UNVR.JK", true],
+    ])
+    const [norges, eupac] = network.holders
+    // Counted and sized by the stocks asked for, as without the others.
+    expect([norges.name, norges.stocks, norges.stake]).toEqual(["GOVERNMENT OF NORWAY", 2, 0.012])
+    expect([eupac.name, eupac.stocks, eupac.stake]).toEqual(["EUPAC Fund", 1, 0.004])
+    expect(network.stakes.filter((s) => s.symbol === "ASII.JK").map((s) => [s.holder, s.holding.percent, s.holding.value])).toEqual([
+      [norges.id, 0.031, null],
+    ])
+    expect(holdersOf(network, "BBCA.JK").map((row) => row.alsoHolds)).toEqual([["BBRI.JK", "ASII.JK"], ["UNVR.JK"]])
+    expect(holdersOf(network, "ASII.JK").map((row) => row.holder.name)).toEqual(["GOVERNMENT OF NORWAY"])
+  })
+
+  it("adds none for a holder the filters leave out", () => {
+    const shared = buildNetwork(ownerships, { ...ALL, sharedOnly: true, elsewhere: true })
+    expect(shared.stocks.map((s) => s.symbol)).toEqual(["BBCA.JK", "BBRI.JK", "ASII.JK"])
+    const funds = buildNetwork(ownerships, { kinds: ["fund"], sharedOnly: false, elsewhere: true })
+    expect(funds.stocks.map((s) => s.symbol)).toEqual(["BBCA.JK", "BBRI.JK", "UNVR.JK"])
+  })
+})
+
 describe("holdersOf", () => {
   it("lists a stock's holders largest first, with the other stocks each one owns", () => {
     const network = buildNetwork(

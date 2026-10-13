@@ -41,18 +41,21 @@ const plain = (fraction: number) => `${Number((fraction * 100).toFixed(2))}%`
 
 /** What the diagram holds, in a line under its title. */
 function summary(network: Network, sharedOnly: boolean): string {
-  const stocks = count(network.stocks.length, "stock", "stocks")
+  const asked = network.stocks.filter((stock) => !stock.outside).length
+  const others = network.stocks.length - asked
+  const stocks = count(asked, "stock", "stocks")
   const holders = network.holders.length
-  if (network.stocks.length === 0) return "Stocks and the holders they have in common"
+  if (asked === 0) return "Stocks and the holders they have in common"
+  const beyond = others > 0 ? `, plus ${count(others, "other stock", "other stocks")} they own` : ""
   if (sharedOnly) {
     return holders === 0
       ? `${stocks}; no named holder owns more than one of them`
-      : `${stocks} and the ${count(holders, "named holder that owns", "named holders that own")} more than one of them`
+      : `${stocks} and the ${count(holders, "named holder that owns", "named holders that own")} more than one of them${beyond}`
   }
-  if (holders === 0) return `${stocks}; the source names no holders for ${network.stocks.length === 1 ? "it" : "them"}`
+  if (holders === 0) return `${stocks}; the source names no holders for ${asked === 1 ? "it" : "them"}`
   const shared = network.holders.filter((holder) => holder.stocks > 1).length
-  const common = network.stocks.length > 1 ? `, ${shared === 0 ? "none" : shared} of them in more than one stock` : ""
-  return `${stocks} and ${count(holders, "named holder", "named holders")}${common}`
+  const common = asked > 1 ? `, ${shared === 0 ? "none" : shared} of them in more than one stock` : ""
+  return `${stocks} and ${count(holders, "named holder", "named holders")}${common}${beyond}`
 }
 
 export function Ownership() {
@@ -62,6 +65,8 @@ export function Ownership() {
   const router = useRouter()
   const [kinds, setKinds] = useState<HolderKind[]>([...HOLDER_KINDS])
   const [sharedOnly, setSharedOnly] = useState(false)
+  /** Draw the other stocks the holders own, too. */
+  const [elsewhere, setElsewhere] = useState(true)
   const [searchOpen, setSearchOpen] = useState(false)
 
   const stocks = workspace.watchlist.flatMap((i) => (i.kind === "ticker" && isCompany(i.symbol) ? [i] : []))
@@ -73,7 +78,12 @@ export function Ownership() {
   const symbols = asked && !listed.includes(asked) ? [...listed, asked] : listed
   const { ownerships, errors, loading, register } = useOwnership(symbols)
 
-  const network = useMemo(() => buildNetwork(ownerships, { kinds, sharedOnly }), [ownerships, kinds, sharedOnly])
+  const network = useMemo(
+    () => buildNetwork(ownerships, { kinds, sharedOnly, elsewhere }),
+    [ownerships, kinds, sharedOnly, elsewhere],
+  )
+  // Only a source that lists a whole market says what else a holder owns.
+  const reaches = ownerships.some((owned) => owned.holders.some((holder) => holder.elsewhere?.length))
   // Hold the last settled network while stocks load, so the diagram is laid out once and not once per answer.
   const [settled, setSettled] = useState(network)
   if (!loading && settled !== network) setSettled(network)
@@ -111,7 +121,7 @@ export function Ownership() {
 
   return (
     <AppShell workspace={workspace} onWorkspaceChange={setWorkspace}>
-      <main className="mx-auto grid w-full max-w-[1440px] flex-1 items-start gap-6 px-4 pt-2 pb-10 lg:grid-cols-[minmax(0,1fr)_360px] lg:px-6">
+      <main className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col gap-6 px-4 pt-2 pb-10 lg:px-6">
         <h1 className="sr-only">Shareholder network</h1>
         <section className="flex min-w-0 flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -152,6 +162,32 @@ export function Ownership() {
                   Shared
                 </ToggleGroupItem>
               </ToggleGroup>
+              {reaches && (
+                <ToggleGroup
+                  type="single"
+                  variant="outline"
+                  size="sm"
+                  spacing={0}
+                  value={elsewhere ? "all" : "asked"}
+                  onValueChange={(value) => value && setElsewhere(value === "all")}
+                  aria-label="Stocks to show"
+                >
+                  <ToggleGroupItem
+                    value="asked"
+                    className="px-2.5 text-xs"
+                    title="Only your watchlist and the stock you looked up"
+                  >
+                    Watchlist
+                  </ToggleGroupItem>
+                  <ToggleGroupItem
+                    value="all"
+                    className="px-2.5 text-xs"
+                    title="Also every other IDX stock their holders own 1% or more of, from KSEI's list"
+                  >
+                    + Holders&apos; other stocks
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              )}
             </div>
             <Button variant="outline" size="sm" onClick={() => setSearchOpen(true)} title="Find a stock (/)">
               <SearchIcon data-icon="inline-start" /> Find a stock <Kbd>/</Kbd>
@@ -185,6 +221,18 @@ export function Ownership() {
               )}
             </CardContent>
           </Card>
+          <p className="px-1 text-xs leading-relaxed text-muted-foreground">
+            A line joins a holder to each stock it owns, so a holder with several lines is one your stocks have in
+            common.{" "}
+            {elsewhere && reaches && (
+              <>
+                Grey dots are the other IDX stocks those holders own 1% or more of; nothing is known here of who else
+                holds them until you click one.{" "}
+              </>
+            )}
+            Click a stock to list its holders, or a holder to keep its lines lit. Drag a node to move it and the
+            background to move the view; scroll over the picture to zoom in on more names.
+          </p>
 
           {selected && (
             <>
@@ -252,7 +300,7 @@ export function Ownership() {
           )}
         </section>
 
-        <aside className="flex min-w-0 flex-col gap-4">
+        <aside className="grid min-w-0 items-start gap-4 md:grid-cols-2">
           <Card className="gap-0 rounded-2xl py-0">
             <CardHeader className="border-b px-4 py-3">
               <CardTitle>Watchlist</CardTitle>
@@ -264,7 +312,7 @@ export function Ownership() {
                   No stocks in your watchlist. Find one above, or add some from the screener.
                 </p>
               ) : (
-                <ul className="flex flex-col">
+                <ul className="grid sm:grid-cols-2">
                   {stocks.map((item) => {
                     const symbol = item.symbol.toUpperCase()
                     const active = symbol === selected
@@ -289,11 +337,6 @@ export function Ownership() {
               )}
             </CardContent>
           </Card>
-          <p className="px-1 text-xs leading-relaxed text-muted-foreground">
-            A line joins a holder to each stock it owns, so a holder with several lines is one your stocks have in
-            common. Click a stock to list its holders, or a holder to keep its lines lit. Drag a node to move it and
-            the background to move the view; pinch, or scroll with Ctrl held, to zoom in on more names.
-          </p>
           {register && <Registers status={register} />}
         </aside>
       </main>

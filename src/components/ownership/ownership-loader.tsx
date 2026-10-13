@@ -22,12 +22,9 @@ function OwnershipSkeleton() {
         <div className="size-7 rounded-lg bg-primary" />
         <div className="h-4 w-20 rounded bg-muted" />
       </div>
-      <div className="mx-auto grid w-full max-w-[1440px] gap-6 px-4 pt-2 lg:grid-cols-[minmax(0,1fr)_360px] lg:px-6">
-        <div className="flex flex-col gap-4">
-          <div className="h-7 w-64 max-w-full rounded-lg bg-muted" />
-          <div className="h-[480px] rounded-2xl bg-muted/60" />
-        </div>
-        <div className="h-[280px] rounded-2xl bg-muted/60" />
+      <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-4 px-4 pt-2 lg:px-6">
+        <div className="h-7 w-64 max-w-full rounded-lg bg-muted" />
+        <div className="h-[560px] rounded-2xl bg-muted/60" />
       </div>
     </div>
   )

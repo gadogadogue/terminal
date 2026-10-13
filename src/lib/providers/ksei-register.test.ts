@@ -5,6 +5,7 @@ import {
   registerChanges,
   registerHolders,
   registerOwnership,
+  registerPortfolios,
   type PageText,
   type Register,
   type RegisterRow,
@@ -163,6 +164,35 @@ describe("registerHolders", () => {
       ["SOMEONE ELSE", 40_000_000, "Corporate"],
     ])
     expect(holders[0].percent).toBeCloseTo(0.7968, 10)
+  })
+})
+
+describe("registerPortfolios", () => {
+  it("lists what else a company's holders own on the register, largest stake first", () => {
+    const register: Register = {
+      date: "2026-05-29",
+      rows: [
+        row("BBCA", "PT DWIMURIA INVESTAMA ANDALAN", 67_729_950_000, 0.5494),
+        row("BBCA", "GOVERNMENT OF NORWAY", 1_242_345_154, 0.0101, "Sovereign Wealth Fund"),
+        row("BBCA", "BUDI HARTONO", 1_800_000_000, 0.0146, "Individual"),
+        row("BBRI", "GOVERNMENT OF NORWAY", 1_600_000_000, 0.0106, "Sovereign Wealth Fund"),
+        // Shares on screen and on paper, listed apart.
+        row("ASII", "GOVERNMENT OF NORWAY", 900_000_000, 0.25, "Sovereign Wealth Fund"),
+        row("ASII", "GOVERNMENT OF NORWAY", 100_000_000, 0.125, "Sovereign Wealth Fund"),
+        // The same company under another spelling.
+        row("TOWR", "DWIMURIA INVESTAMA ANDALAN PT", 5_000_000_000, 0.1),
+        row("TLKM", "NEGARA REPUBLIK INDONESIA", 51_602_353_560, 0.5209, "Others"),
+      ],
+    }
+    const portfolios = registerPortfolios(register, "BBCA")
+    // Under the names BBCA's own list has them by; a holder of nothing else is not in it.
+    expect([...portfolios.keys()].sort()).toEqual(["GOVERNMENT OF NORWAY", "PT DWIMURIA INVESTAMA ANDALAN"])
+    expect(portfolios.get("GOVERNMENT OF NORWAY")!.map((stake) => [stake.code, stake.issuer, stake.shares, stake.percent])).toEqual([
+      ["ASII", "ASII Tbk", 1_000_000_000, 0.375],
+      ["BBRI", "BBRI Tbk", 1_600_000_000, 0.0106],
+    ])
+    expect(portfolios.get("PT DWIMURIA INVESTAMA ANDALAN")!.map((stake) => stake.code)).toEqual(["TOWR"])
+    expect(registerPortfolios(register, "ZZZZ").size).toBe(0)
   })
 })
 
