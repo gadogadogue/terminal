@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
+import { defaultFallScreen } from "@/lib/analytics/pbv-fall"
 import { defaultScreen, type Screen } from "@/lib/analytics/screener"
 import { defaultWorkspace } from "./defaults"
 import { parseWatchlistFile, toWatchlistFile } from "./file"
@@ -40,14 +41,28 @@ describe("watchlist file", () => {
 })
 
 describe("screener in the file", () => {
-  it("round-trips filters, sectors and sort", () => {
+  it("round-trips filters, sectors, sort and the P/BV fall screen", () => {
     const screener: Screen = {
       sectors: ["Financial Services"],
       filters: { pbv: { max: 1 }, roe: { min: 0.12 } },
       sort: { key: "roe", dir: "desc" },
+      fall: { on: true, period: "6M", mark: 1.3, minFall: 0.5, cause: "book", sort: { key: "fall", dir: "asc" } },
     }
     const back = parseWatchlistFile(JSON.parse(JSON.stringify(toWatchlistFile({ ...defaultWorkspace(), screener }))))
     expect(back.screener).toEqual(screener)
+  })
+
+  it("defaults the parts of the P/BV fall screen it doesn't know", () => {
+    const ws = parseWatchlistFile({
+      watchlist: [],
+      screener: { fall: { on: true, period: "2W", mark: 1.2, cause: "sentiment", sort: { key: "beta", dir: "asc" } } },
+    })
+    expect(ws.screener.fall).toEqual({ ...defaultFallScreen(), on: true, mark: 1.2 })
+  })
+
+  it("rejects a P/BV mark or fall that can't be one", () => {
+    expect(() => parseWatchlistFile({ screener: { fall: { mark: 0 } } })).toThrow()
+    expect(() => parseWatchlistFile({ screener: { fall: { minFall: 20 } } })).toThrow()
   })
 
   it("defaults when a file has no screener section", () => {

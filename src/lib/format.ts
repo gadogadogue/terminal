@@ -79,6 +79,13 @@ export function formatDate(iso: string): string {
   })
 }
 
+const dayMonth = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })
+
+/** "2026-10-09" → "9 Oct", keeping the year when it isn't the year of `reference`. */
+export function formatShortDate(iso: string, reference: string): string {
+  return iso.slice(0, 4) === reference.slice(0, 4) ? dayMonth.format(new Date(`${iso}T00:00:00Z`)) : formatDate(iso)
+}
+
 /** Text color class for a signed number; the sign itself is always printed. */
 export function signClass(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value) || value === 0) return "text-muted-foreground"

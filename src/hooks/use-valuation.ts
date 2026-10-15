@@ -34,6 +34,8 @@ export function useValuation(
   range: RangeKey,
   /** How earnings per share are stated; only P/E uses it. */
   basis: EarningsBasis,
+  /** A date to start on instead of the range's start. */
+  start: string | null = null,
 ): ValuationState {
   const enabled = symbol != null
   const price = useQuery({ ...historyQuery(symbol ?? "", FETCH_RANGE, "price"), enabled })
@@ -62,9 +64,9 @@ export function useValuation(
     if (!price.data || !fundamental || (reportingCurrency && !fx.data)) return null
     return buildValuation(
       { price: price.data.points, fundamental, fx: reportingCurrency ? fx.data!.points : null },
-      { range },
+      { range, start: start ?? undefined },
     )
-  }, [price.data, fundamental, fx.data, reportingCurrency, range])
+  }, [price.data, fundamental, fx.data, reportingCurrency, range, start])
 
   const fxError =
     reportingCurrency && fx.error ? new Error(`No ${reportingCurrency}/${currency} rate: ${fx.error.message}`) : null

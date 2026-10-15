@@ -206,6 +206,34 @@ export interface MarketSnapshot {
   stocks: StockSnapshot[]
 }
 
+/** One stock's part of a `MarketHistory`. */
+export interface StockHistory {
+  symbol: string
+  /** Closes without dividends on each of the history's `dates`; null where the stock did not trade. */
+  closes: (number | null)[]
+  /** Book value per share at each balance-sheet date, oldest first, in the currency of the accounts. */
+  bookValue: PricePoint[]
+  /** Set when the accounts are in another currency than the market's. */
+  reportingCurrency?: string
+}
+
+/**
+ * Prices and book values for every stock in the home market over the past
+ * year, for screens that look back in time. Every series lines up with
+ * `dates`, which keeps the whole market small enough to send at once.
+ */
+export interface MarketHistory {
+  market: string
+  currency: string
+  /** Trading days, oldest first. */
+  dates: string[]
+  stocks: StockHistory[]
+  /** Value of one unit of each reporting currency in `currency` on each of `dates`; null where there is no rate. */
+  fx: Record<string, (number | null)[]>
+  /** Stocks left out because their history could not be read this time, as opposed to having none. */
+  missing: number
+}
+
 /**
  * A market-data source. Add one by implementing this interface and
  * registering it in `./index.ts`. Providers only run on the server.
