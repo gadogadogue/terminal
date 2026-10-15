@@ -34,9 +34,12 @@ export const SYMBOL_PATTERN = /^[A-Za-z0-9.\-=^_]{1,24}$/
 export const VALUATION_RATIOS = ["pbv", "pe"] as const
 export type ValuationRatio = (typeof VALUATION_RATIOS)[number]
 
-/** A stock's valuation chart. Symbol and ratio ride in the URL so any page can link to it. */
-export function valuationHref(symbol: string, ratio: ValuationRatio = "pbv"): string {
-  return `/valuation?${new URLSearchParams({ symbol, ratio })}`
+/**
+ * A stock's valuation chart, starting on `from` (YYYY-MM-DD) when given
+ * rather than at a range. Everything rides in the URL so any page can link to it.
+ */
+export function valuationHref(symbol: string, ratio: ValuationRatio = "pbv", from?: string): string {
+  return `/valuation?${new URLSearchParams({ symbol, ratio, ...(from && { from }) })}`
 }
 
 /** Indices (^JKSE), currencies (USDIDR=X) and futures (GC=F) are not companies: no accounts, no shareholders. */

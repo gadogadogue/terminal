@@ -4,6 +4,7 @@ import { queryOptions } from "@tanstack/react-query"
 import type {
   BookValueHistory,
   EarningsHistory,
+  MarketHistory,
   MarketSnapshot,
   Ownership,
   PriceBasis,
@@ -75,5 +76,13 @@ export function screenerQuery() {
   return queryOptions({
     queryKey: ["screener"] as const,
     queryFn: () => getJson<MarketSnapshot>("/api/screener"),
+  })
+}
+
+/** A year of every stock's prices and book values: one large answer, so it is fetched only when a screen needs it. */
+export function marketHistoryQuery() {
+  return queryOptions({
+    queryKey: ["screener-history"] as const,
+    queryFn: () => getJson<MarketHistory>("/api/screener/history"),
   })
 }

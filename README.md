@@ -12,7 +12,9 @@ one currency, from one start date:
 
 **Screener** lists every IDX stock with its valuation, so you can find ideas
 by P/BV, ROE, P/E, dividend yield, size and liquidity, then add the ones you
-like to the watchlist and compare them.
+like to the watchlist and compare them. Its **P/BV fall** screen finds the
+stocks whose P/BV just fell through a mark, such as 1× book, and says
+whether the price dropping or book value growing pushed it there.
 
 **Valuation** answers one question about a stock's P/BV or P/E: did it move
 because of the price, or because of the book value or earnings under it? It
@@ -52,6 +54,11 @@ and you keep it as a plain JSON file: export it, store it anywhere, import it
 - A screener over the whole IDX: min/max filters on nine metrics, sectors,
   sortable columns, and presets (below book, cheap & profitable, Graham,
   high yield) as starting points
+- A P/BV fall screen: stocks whose P/BV was above a mark in the past month,
+  3 or 6 months or year and is at or below it now, by at least a given fall
+  from the period's high. Each shows when it crossed and how much of the fall
+  came from the price and how much from book value, can be filtered by that
+  cause, and opens its P/BV chart from the high
 - A P/BV and a P/E chart per stock (click either ratio in the screener):
   price, book value or earnings per share, and the ratio on one start date,
   with the share of the move that came from each. Earnings can be the
@@ -128,6 +135,17 @@ Filter keys are `pbv`, `roe`, `pe`, `forwardPe`, `dividendYield`,
 fractions (`0.12` is 12%) and amounts are in IDR. Keys an older version
 doesn't know are ignored.
 
+The screener section can also hold the P/BV fall screen, all of it optional:
+
+```json
+"fall": { "on": true, "period": "3M", "mark": 1, "minFall": 0.1, "cause": "any", "sort": { "key": "crossed", "dir": "desc" } }
+```
+
+`period` is `1M`, `3M`, `6M` or `1Y`; `mark` is the P/BV multiple; `minFall`
+is the least fall from the period's high as a fraction; `cause` is `any`,
+`price`, `book` or `both`. A period, cause or sort key an older version
+doesn't know falls back to its default.
+
 `selected` marks what is plotted. Any item can also carry `color` (1–8, a
 position in the chart palette, used while plotted) and `line` (`solid`,
 `dashed` or `dotted`); both are optional and set from the line key next to
@@ -178,6 +196,17 @@ Those trailing figures are the default. The chart can also keep full fiscal
 years only, average each figure with the others reported in the year before
 it, or average three fiscal years in a row (which leaves about two points of
 the four years the source has). P/E is the price over whichever is picked.
+
+The P/BV fall screen needs the balance sheets for the whole market at once:
+a year of daily closes and every balance sheet of each IDX stock, two
+requests per stock, eight stocks at a time. It takes about ten seconds the
+first time and is cached for hours. Yahoo has no balance sheets at all for
+about a quarter of IDX stocks, so the screen leaves those out and says how
+many. Each day's P/BV is the close over the book value of the latest balance
+sheet by then. A fall runs from the period's highest P/BV to the last close
+and is split between price and book value as on the valuation chart; one of
+them is named the cause when it gave at least 80% of the fall, otherwise
+both are.
 
 The ownership network uses Yahoo's **company summary endpoint**, with the
 same session as the screener, one request per stock, cached for a day. It
@@ -267,7 +296,7 @@ browser check.
 src/
   app/api/history, search, screener Server routes that proxy and cache the provider
   lib/providers/                    Data sources (Yahoo today)
-  lib/analytics/                    Currency conversion, alignment, metrics, screener math, network layout (pure, tested)
+  lib/analytics/                    Currency conversion, alignment, metrics, screener math, P/BV falls, network layout (pure, tested)
   lib/workspace/                    Watchlist state and the file format
   hooks/                            Data fetching and browser persistence
   components/dashboard/             The comparison dashboard

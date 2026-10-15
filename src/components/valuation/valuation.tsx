@@ -25,6 +25,8 @@ import { DriversTable, verdict, type DriverRow } from "./drivers-table"
 /** Company reports go back about four years, so longer ranges would show nothing more. */
 const RANGES = RANGE_KEYS.filter((r) => r !== "10Y" && r !== "MAX")
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
+
 /** The price line's slot in the chart palette: green, whichever ratio is showing. */
 const PRICE_SLOT = 2
 
@@ -123,6 +125,8 @@ export function Valuation() {
   const requested = params.get("symbol")?.toUpperCase() ?? ""
   const symbol = SYMBOL_PATTERN.test(requested) ? requested : (stocks[0]?.symbol.toUpperCase() ?? null)
   const ratio = VALUATION_RATIOS.find((r) => r === params.get("ratio")) ?? "pbv"
+  // A start date from a link, such as the screener's P/BV high; picking a range drops it.
+  const from = ISO_DATE.test(params.get("from") ?? "") ? params.get("from") : null
   const copy = RATIOS[ratio]
   // The line under the price, named for how its earnings are stated.
   const line = ratio === "pe" ? copy.line + BASES[basis].suffix : copy.line
@@ -131,6 +135,7 @@ export function Valuation() {
     ratio,
     range,
     basis,
+    from,
   )
 
   // "/" or Ctrl/Cmd+K opens stock search, unless focus is in a text field.
@@ -249,11 +254,17 @@ export function Valuation() {
                 variant="outline"
                 size="sm"
                 spacing={0}
-                value={range}
+                // A start date from a link shows no range as picked.
+                value={from ? "" : range}
                 // Clicking the active range reports "", which still means "reset to this range".
                 onValueChange={(value) => {
                   setViewKey((k) => k + 1)
                   if (value) setRange(value as RangeKey)
+                  if (from) {
+                    const next = new URLSearchParams(params)
+                    next.delete("from")
+                    router.replace(`/valuation?${next}`, { scroll: false })
+                  }
                 }}
                 aria-label="Time range"
               >
