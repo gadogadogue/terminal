@@ -4,9 +4,12 @@ import { queryOptions } from "@tanstack/react-query"
 import type {
   BookValueHistory,
   EarningsHistory,
+  MarketHistory,
   MarketSnapshot,
+  Ownership,
   PriceBasis,
   PriceHistory,
+  RegisterStatus,
   SearchResult,
 } from "@/lib/providers/types"
 import type { FetchRange } from "@/lib/ranges"
@@ -42,6 +45,24 @@ export function earningsQuery(symbol: string) {
   })
 }
 
+/** The saved shareholder registers. Asked again on every visit: the user adds files while the app is open. */
+export function registerQuery() {
+  return queryOptions({
+    queryKey: ["register"] as const,
+    queryFn: () => getJson<RegisterStatus>("/api/register"),
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+  })
+}
+
+/** `register` is the version of the saved registers, so a new file means a new question and never a cached answer. */
+export function ownershipQuery(symbol: string, register: string) {
+  return queryOptions({
+    queryKey: ["shareholders", symbol, register] as const,
+    queryFn: () => getJson<Ownership>(`/api/shareholders?${new URLSearchParams({ symbol, register })}`),
+  })
+}
+
 export function searchQuery(q: string) {
   return queryOptions({
     queryKey: ["search", q.toLowerCase()] as const,
@@ -55,5 +76,13 @@ export function screenerQuery() {
   return queryOptions({
     queryKey: ["screener"] as const,
     queryFn: () => getJson<MarketSnapshot>("/api/screener"),
+  })
+}
+
+/** A year of every stock's prices and book values: one large answer, so it is fetched only when a screen needs it. */
+export function marketHistoryQuery() {
+  return queryOptions({
+    queryKey: ["screener-history"] as const,
+    queryFn: () => getJson<MarketHistory>("/api/screener/history"),
   })
 }

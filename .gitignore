@@ -42,3 +42,6 @@ next-env.d.ts
 
 # local tooling
 .claude/
+
+# parsed copies of the shareholder lists in data/ksei, rebuilt from the PDFs
+/data/ksei/.cache/

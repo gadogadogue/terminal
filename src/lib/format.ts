@@ -28,6 +28,13 @@ export function formatShortPercent(fraction: number | null | undefined, signed =
   return (signed ? signedShortPercent : shortPercent).format(fraction)
 }
 
+const share = new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+/** A part of a whole, which has no sign: 0.0059 → "0.59%". */
+export function formatShare(fraction: number | null | undefined): string {
+  return fraction == null || !Number.isFinite(fraction) ? "—" : share.format(fraction)
+}
+
 /** A multiple like P/E: two decimals while small, fewer as it grows. */
 export function formatRatio(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "—"
@@ -36,10 +43,15 @@ export function formatRatio(value: number | null | undefined): string {
 }
 
 const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 })
+const signedCompact = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+  signDisplay: "exceptZero",
+})
 
-/** 743_192_618_074_112 → "743.2T". */
-export function formatAmount(value: number | null | undefined): string {
-  return value == null || !Number.isFinite(value) ? "—" : compact.format(value)
+/** 743_192_618_074_112 → "743.2T", or "+743.2T" when signed. */
+export function formatAmount(value: number | null | undefined, signed = false): string {
+  return value == null || !Number.isFinite(value) ? "—" : (signed ? signedCompact : compact).format(value)
 }
 
 /** A value already in percent units: 12.34 → "+12.34%". */
@@ -65,6 +77,13 @@ export function formatDate(iso: string): string {
     year: "numeric",
     timeZone: "UTC",
   })
+}
+
+const dayMonth = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })
+
+/** "2026-10-09" → "9 Oct", keeping the year when it isn't the year of `reference`. */
+export function formatShortDate(iso: string, reference: string): string {
+  return iso.slice(0, 4) === reference.slice(0, 4) ? dayMonth.format(new Date(`${iso}T00:00:00Z`)) : formatDate(iso)
 }
 
 /** Text color class for a signed number; the sign itself is always printed. */

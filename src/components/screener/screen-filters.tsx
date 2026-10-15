@@ -113,7 +113,7 @@ export function ScreenFilters({
   )
 }
 
-function FilterSection({ title, children }: { title: string; children: React.ReactNode }) {
+export function FilterSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
       <h3 className="text-xs font-medium text-muted-foreground">{title}</h3>
@@ -165,18 +165,26 @@ function MetricRow({
 /** Text the user is midway through typing, like "-" or ".", isn't an error yet. */
 const INCOMPLETE = /^[+-]?\.?$/
 
-function BoundInput({
+const anyNumber = () => true
+
+export function BoundInput({
   id,
   label,
   unit,
   value,
   onChange,
+  required = false,
+  accept = anyNumber,
 }: {
   id: string
   label: string
   unit: MetricUnit
   value: number | undefined
   onChange: (value: number | null) => void
+  /** The field can't stay empty: leaving it empty, or invalid, puts the value back. */
+  required?: boolean
+  /** The numbers it takes. Others show as invalid and aren't passed on. */
+  accept?: (value: number) => boolean
 }) {
   const [text, setText] = useState(() => formatBound(value, unit))
   const [shown, setShown] = useState(value)
@@ -187,8 +195,10 @@ function BoundInput({
     if (parseBound(text, unit) !== (value ?? null)) setText(formatBound(value, unit))
   }
 
+  const usable = (parsed: number | null | undefined) =>
+    parsed === null ? !required : parsed !== undefined && accept(parsed)
   const parsed = parseBound(text, unit)
-  const invalid = parsed === undefined && !INCOMPLETE.test(text.trim())
+  const invalid = parsed === undefined ? !INCOMPLETE.test(text.trim()) : parsed !== null && !accept(parsed)
   const suffix = UNIT_SUFFIX[unit]
   return (
     <InputGroup className="h-7">
@@ -203,10 +213,13 @@ function BoundInput({
         onChange={(e) => {
           setText(e.target.value)
           const next = parseBound(e.target.value, unit)
-          if (next !== undefined) onChange(next)
+          if (usable(next)) onChange(next ?? null)
         }}
         // Tidy what was typed: "1." becomes "1", "1000000000" becomes "1B".
-        onBlur={() => parsed !== undefined && setText(formatBound(parsed ?? undefined, unit))}
+        onBlur={() => {
+          if (usable(parsed)) setText(formatBound(parsed ?? undefined, unit))
+          else if (required) setText(formatBound(value, unit))
+        }}
       />
       {suffix && (
         <InputGroupAddon align="inline-end">
