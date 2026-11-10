@@ -3,6 +3,8 @@ import { yahooProvider } from "./yahoo"
 
 export * from "./types"
 export { SYMBOL_PATTERN } from "@/lib/instruments"
+export { REGISTER_FOLDER, currentRegisterVersion, loadRegisters, shareholders } from "./register"
+export { marketHistory } from "./market-history"
 
 const providers: Record<string, DataProvider> = {
   [yahooProvider.id]: yahooProvider,

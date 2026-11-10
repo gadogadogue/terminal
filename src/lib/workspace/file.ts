@@ -1,4 +1,11 @@
 import { z } from "zod"
+import {
+  defaultFallScreen,
+  FALL_CAUSES,
+  FALL_PERIODS,
+  isFallSortKey,
+  type FallScreen,
+} from "@/lib/analytics/pbv-fall"
 import { defaultScreen, isMetricKey, type Screen } from "@/lib/analytics/screener"
 import { instrumentKey, LINE_DASHES, SYMBOL_PATTERN, type Instrument } from "@/lib/instruments"
 import { RANGE_KEYS } from "@/lib/ranges"
@@ -46,15 +53,47 @@ const item = z.union([
  * plain numbers. Metric names this version doesn't know are skipped, so a
  * file from a newer version still opens.
  */
+const sort = z.object({ key: z.string(), dir: z.enum(["asc", "desc"]) })
+
+/**
+ * The P/BV fall screen. The mark is a multiple and the fall a fraction (0.1
+ * is 10%). A period, cause or sort this version doesn't know gets the default.
+ */
+const fall = z.object({
+  on: z.boolean().optional(),
+  period: z.string().optional(),
+  mark: z.number().positive().optional(),
+  minFall: z.number().min(0).max(1).optional(),
+  cause: z.string().optional(),
+  sort: sort.optional(),
+})
+
 const screener = z.object({
   sectors: z.array(z.string().trim().min(1).max(64)).max(50).optional(),
   filters: z.record(z.string(), z.object({ min: z.number().optional(), max: z.number().optional() })).optional(),
-  sort: z.object({ key: z.string(), dir: z.enum(["asc", "desc"]) }).optional(),
+  sort: sort.optional(),
+  fall: fall.optional(),
 })
+
+const known = <T extends string>(values: readonly T[], value: string | undefined): value is T =>
+  (values as readonly string[]).includes(value ?? "")
+
+function readFall(file: z.output<typeof fall> | undefined): FallScreen {
+  const screen = defaultFallScreen()
+  if (!file) return screen
+  if (file.on != null) screen.on = file.on
+  if (known(FALL_PERIODS, file.period)) screen.period = file.period
+  if (file.mark != null) screen.mark = file.mark
+  if (file.minFall != null) screen.minFall = file.minFall
+  if (known(FALL_CAUSES, file.cause)) screen.cause = file.cause
+  if (file.sort && isFallSortKey(file.sort.key)) screen.sort = { key: file.sort.key, dir: file.sort.dir }
+  return screen
+}
 
 function readScreen(file: z.output<typeof screener> | undefined): Screen {
   const screen = defaultScreen()
   if (!file) return screen
+  screen.fall = readFall(file.fall)
   if (file.sectors) screen.sectors = [...new Set(file.sectors)]
   for (const [key, { min, max }] of Object.entries(file.filters ?? {})) {
     if (!isMetricKey(key) || (min == null && max == null)) continue

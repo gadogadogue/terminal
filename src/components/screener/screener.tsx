@@ -10,16 +10,33 @@ import { Kbd } from "@/components/dashboard/kbd"
 import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
-import { screenerQuery } from "@/hooks/use-history"
+import { marketHistoryQuery, screenerQuery } from "@/hooks/use-history"
 import { useWorkspace } from "@/hooks/use-workspace"
+import { findFalls, marketPbvDays, runFallScreen, type FallCause, type FallPeriod } from "@/lib/analytics/pbv-fall"
 import { activeFilterCount, runScreen, screenRow, type Screen, type ScreenRow } from "@/lib/analytics/screener"
+import { formatRatio, formatShortPercent } from "@/lib/format"
 import { instrumentKey } from "@/lib/instruments"
 import type { StockSnapshot } from "@/lib/providers/types"
 import { addInstrument, MAX_PLOTTED } from "@/lib/workspace"
+import { FallFilters } from "./fall-filters"
+import { FallsTable } from "./falls-table"
 import { ResultsTable } from "./results-table"
 import { ScreenFilters, type SectorCount } from "./screen-filters"
 
 const asOfFormat = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+
+const PERIOD_WORDS: Record<FallPeriod, string> = {
+  "1M": "the past month",
+  "3M": "the past 3 months",
+  "6M": "the past 6 months",
+  "1Y": "the past year",
+}
+
+const CAUSE_WORDS: Record<Exclude<FallCause, "any">, string> = {
+  price: "the price",
+  book: "book value",
+  both: "both price and book value",
+}
 
 function countSectors(rows: ScreenRow[]): SectorCount[] {
   const counts = new Map<string, number>()
@@ -43,6 +60,14 @@ export function Screener() {
     () => new Set([...workspace.watchlist, ...workspace.benchmarks].map(instrumentKey)),
     [workspace.watchlist, workspace.benchmarks],
   )
+  const isListed = (symbol: string) => listed.has(instrumentKey({ kind: "ticker", symbol }))
+
+  // The P/BV fall screen needs a year of the whole market, so it loads only once switched on.
+  const fall = screen.fall
+  const history = useQuery({ ...marketHistoryQuery(), enabled: fall.on })
+  const days = useMemo(() => history.data && marketPbvDays(history.data), [history.data])
+  const falls = useMemo(() => days && findFalls(days, fall.period, fall.mark), [days, fall.period, fall.mark])
+  const fallResults = useMemo(() => (falls ? runFallScreen(results, falls, fall) : []), [results, falls, fall])
 
   // "/" jumps to the search box, unless focus is already in a text field.
   useEffect(() => {
@@ -69,16 +94,24 @@ export function Screener() {
   }
 
   const narrowed = activeFilterCount(screen) > 0 || query.trim() !== ""
-  const empty = error ? (
+  const failure = error ?? history.error
+  const empty = failure ? (
     <span className="flex flex-col items-center gap-3">
-      {error.message}
-      <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
+      {failure.message}
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => (error ? refetch() : history.refetch())}
+        disabled={isFetching || history.isFetching}
+      >
         Try again
       </Button>
     </span>
   ) : (
     <span className="flex flex-col items-center gap-3">
-      No stocks pass these filters.
+      {fall.on
+        ? `No stock's P/BV fell below ${formatRatio(fall.mark)}× in ${PERIOD_WORDS[fall.period]} by ${formatShortPercent(fall.minFall)} or more${fall.cause === "any" ? "" : `, with ${CAUSE_WORDS[fall.cause]} as the cause`}${narrowed ? " among the filtered stocks" : ""}.`
+        : "No stocks pass these filters."}
       {narrowed && (
         <Button
           variant="outline"
@@ -94,11 +127,25 @@ export function Screener() {
     </span>
   )
 
+  const asOf = data ? asOfFormat.format(new Date(data.asOf)) : ""
+  const description = !data
+    ? error
+      ? "Could not load the market"
+      : "Loading the market…"
+    : !fall.on
+      ? `${results.length} of ${data.stocks.length} ${data.market} stocks · ${data.currency} · as of ${asOf}`
+      : history.data
+        ? `${fallResults.length} fell below ${formatRatio(fall.mark)}× in ${PERIOD_WORDS[fall.period]}, by ${formatShortPercent(fall.minFall)} or more · ${history.data.stocks.length} of ${data.stocks.length} ${data.market} stocks checked · as of ${asOf}`
+        : history.error
+          ? "Could not load the price and book value history"
+          : `Reading a year of prices and balance sheets for ${data.stocks.length} stocks. The first time takes about ten seconds.`
+
   return (
     <AppShell workspace={workspace} onWorkspaceChange={setWorkspace}>
       <main className="mx-auto grid w-full max-w-[1440px] flex-1 items-start gap-6 px-4 pt-2 pb-10 lg:grid-cols-[288px_minmax(0,1fr)] lg:px-6">
         <h1 className="sr-only">Stock screener</h1>
         <aside className="flex min-w-0 flex-col gap-4">
+          <FallFilters fall={fall} onChange={(next) => setScreen({ ...screen, fall: next })} />
           <ScreenFilters screen={screen} sectors={sectors} onChange={setScreen} />
           <p className="px-1 text-xs leading-relaxed text-muted-foreground">
             Filters are saved with your watchlist, so <span className="text-foreground">Export</span> keeps them too.
@@ -108,14 +155,8 @@ export function Screener() {
         <section className="flex min-w-0 flex-col gap-4">
           <Card className="gap-0 rounded-2xl py-0">
             <CardHeader className="border-b px-4 py-3">
-              <CardTitle>Stocks</CardTitle>
-              <CardDescription className="col-start-1 text-xs">
-                {data
-                  ? `${results.length} of ${data.stocks.length} ${data.market} stocks · ${data.currency} · as of ${asOfFormat.format(new Date(data.asOf))}`
-                  : error
-                    ? "Could not load the market"
-                    : "Loading the market…"}
-              </CardDescription>
+              <CardTitle>{fall.on ? "P/BV falls" : "Stocks"}</CardTitle>
+              <CardDescription className="col-start-1 text-xs">{description}</CardDescription>
               {/* Its own full-width row on phones, beside the title from sm up. */}
               <CardAction className="col-span-2 col-start-1 row-span-1 row-start-3 mt-2 w-full sm:col-span-1 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:w-auto">
                 <InputGroup className="w-full sm:w-56">
@@ -142,17 +183,47 @@ export function Screener() {
               </CardAction>
             </CardHeader>
             <CardContent className="px-0">
-              <ResultsTable
-                rows={results}
-                loading={isPending}
-                sort={screen.sort}
-                onSort={(sort) => setScreen({ ...screen, sort })}
-                isListed={(symbol) => listed.has(instrumentKey({ kind: "ticker", symbol }))}
-                onAdd={add}
-                empty={empty}
-              />
+              {fall.on ? (
+                <FallsTable
+                  rows={fallResults}
+                  loading={isPending || history.isPending}
+                  sort={fall.sort}
+                  onSort={(sort) => setScreen({ ...screen, fall: { ...fall, sort } })}
+                  isListed={isListed}
+                  onAdd={add}
+                  empty={empty}
+                />
+              ) : (
+                <ResultsTable
+                  rows={results}
+                  loading={isPending}
+                  sort={screen.sort}
+                  onSort={(sort) => setScreen({ ...screen, sort })}
+                  isListed={isListed}
+                  onAdd={add}
+                  empty={empty}
+                />
+              )}
             </CardContent>
           </Card>
+          {fall.on ? (
+            <p className="px-1 text-xs leading-relaxed text-muted-foreground">
+              Each day&apos;s P/BV is the close over the book value per share of the latest balance sheet by then. Book
+              value steps on each balance-sheet date, though companies publish weeks later, so a period without one
+              puts the whole fall on the price. <span className="text-foreground">Fall</span> runs from the highest
+              P/BV in the period to the last close and splits between price and book value as the valuation chart
+              does: click a <span className="text-foreground">P/BV</span> to open that chart from the high.{" "}
+              {history.data && data && history.data.stocks.length < data.stocks.length && (
+                <>
+                  The source has no balance sheets for{" "}
+                  {data.stocks.length - history.data.stocks.length - history.data.missing} of the {data.stocks.length}{" "}
+                  stocks, so they can&apos;t be checked
+                  {history.data.missing > 0 && `, and ${history.data.missing} couldn't be read just now`}.{" "}
+                </>
+              )}
+              The other filters still apply.
+            </p>
+          ) : (
           <p className="px-1 text-xs leading-relaxed text-muted-foreground">
             P/BV and ROE use the latest book value per share; ROE is trailing 12-month earnings over it, so both lag
             the newest filing. <span className="text-foreground">≈</span> marks companies that report in USD: their
@@ -162,6 +233,7 @@ export function Screener() {
             <span className="text-foreground">P/BV</span> or <span className="text-foreground">P/E</span> to see
             whether the price or the accounts moved it.
           </p>
+          )}
         </section>
       </main>
     </AppShell>

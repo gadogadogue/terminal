@@ -11,7 +11,6 @@ import {
   type ScreenMetric,
   type ScreenRow,
   type SortDir,
-  type SortKey,
 } from "@/lib/analytics/screener"
 import { formatAmount, formatPrice, formatRatio, formatShortPercent, signClass } from "@/lib/format"
 import { valuationHref } from "@/lib/instruments"
@@ -120,7 +119,7 @@ export function ResultsTable({
   )
 }
 
-function SortHead({
+export function SortHead<K extends string>({
   label,
   hint,
   sortKey,
@@ -131,10 +130,10 @@ function SortHead({
 }: {
   label: string
   hint: string
-  sortKey: SortKey
+  sortKey: K
   firstDir: SortDir
-  sort: Screen["sort"]
-  onSort: (sort: Screen["sort"]) => void
+  sort: { key: K; dir: SortDir }
+  onSort: (sort: { key: K; dir: SortDir }) => void
   align?: "left" | "right"
 }) {
   const active = sort.key === sortKey
@@ -162,6 +161,50 @@ function SortHead({
   )
 }
 
+/** The row's first cell: add the stock to the watchlist, or a check when it is already in a list. */
+export function AddCell({
+  stock,
+  listed,
+  onAdd,
+}: {
+  stock: StockSnapshot
+  listed: boolean
+  onAdd: (stock: StockSnapshot) => void
+}) {
+  return (
+    <TableCell className="pl-3">
+      {listed ? (
+        <span className="flex size-6 items-center justify-center text-muted-foreground" title="In your lists">
+          <CheckIcon className="size-3.5" aria-label="In your lists" />
+        </span>
+      ) : (
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => onAdd(stock)}
+          title="Add to watchlist"
+          aria-label={`Add ${stock.symbol} to watchlist`}
+        >
+          <PlusIcon />
+        </Button>
+      )}
+    </TableCell>
+  )
+}
+
+export function StockCell({ stock }: { stock: StockSnapshot }) {
+  return (
+    <TableCell className="max-w-48">
+      <div className="flex min-w-0 flex-col leading-tight">
+        <span className="font-medium">{stock.symbol}</span>
+        <span className="truncate text-xs text-muted-foreground" title={[stock.name, stock.sector].filter(Boolean).join(" · ")}>
+          {stock.name}
+        </span>
+      </div>
+    </TableCell>
+  )
+}
+
 function ResultRow({
   row,
   listed,
@@ -174,31 +217,8 @@ function ResultRow({
   const { stock, metrics } = row
   return (
     <TableRow>
-      <TableCell className="pl-3">
-        {listed ? (
-          <span className="flex size-6 items-center justify-center text-muted-foreground" title="In your lists">
-            <CheckIcon className="size-3.5" aria-label="In your lists" />
-          </span>
-        ) : (
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={() => onAdd(stock)}
-            title="Add to watchlist"
-            aria-label={`Add ${stock.symbol} to watchlist`}
-          >
-            <PlusIcon />
-          </Button>
-        )}
-      </TableCell>
-      <TableCell className="max-w-48">
-        <div className="flex min-w-0 flex-col leading-tight">
-          <span className="font-medium">{stock.symbol}</span>
-          <span className="truncate text-xs text-muted-foreground" title={[stock.name, stock.sector].filter(Boolean).join(" · ")}>
-            {stock.name}
-          </span>
-        </div>
-      </TableCell>
+      <AddCell stock={stock} listed={listed} onAdd={onAdd} />
+      <StockCell stock={stock} />
       <TableCell className="hidden max-w-40 truncate text-xs text-muted-foreground 2xl:table-cell">
         {stock.sector ?? "—"}
       </TableCell>

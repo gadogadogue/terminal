@@ -1,4 +1,5 @@
 import type { StockSnapshot } from "@/lib/providers/types"
+import { defaultFallScreen, type FallScreen } from "./pbv-fall"
 
 /**
  * Screener math: ratios from each stock's raw inputs, then filtering and
@@ -117,10 +118,12 @@ export interface Screen {
   sectors: string[]
   filters: Filters
   sort: { key: SortKey; dir: SortDir }
+  /** Stocks whose P/BV fell through a mark, on top of the filters above. */
+  fall: FallScreen
 }
 
 export function defaultScreen(): Screen {
-  return { sectors: [], filters: {}, sort: { key: "pbv", dir: "asc" } }
+  return { sectors: [], filters: {}, sort: { key: "pbv", dir: "asc" }, fall: defaultFallScreen() }
 }
 
 /** Sets or clears one side of a metric's bounds. A metric with neither side is dropped. */

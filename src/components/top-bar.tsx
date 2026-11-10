@@ -3,7 +3,7 @@
 import { ChartSplineIcon, DownloadIcon, EllipsisIcon, PencilIcon, RotateCcwIcon, UploadIcon } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import {
@@ -29,12 +29,23 @@ const SECTIONS = [
   { href: "/", label: "Compare" },
   { href: "/screener", label: "Screener" },
   { href: "/valuation", label: "Valuation" },
+  { href: "/ownership", label: "Ownership" },
 ] as const
 
 function SectionNav() {
   const pathname = usePathname()
+  const current = useRef<HTMLAnchorElement>(null)
+
+  // On a phone the sections don't all fit and the row scrolls sideways; keep the current one in sight.
+  useEffect(() => {
+    current.current?.scrollIntoView({ block: "nearest", inline: "nearest" })
+  }, [pathname])
+
   return (
-    <nav className="flex shrink-0 items-center gap-0.5 md:ml-3" aria-label="Sections">
+    <nav
+      className="flex min-w-0 items-center gap-0.5 overflow-x-auto [scrollbar-width:none] md:ml-3"
+      aria-label="Sections"
+    >
       {SECTIONS.map(({ href, label }) => {
         const active = pathname === href
         return (
@@ -43,9 +54,9 @@ function SectionNav() {
             asChild
             variant="ghost"
             size="sm"
-            className={cn(active ? "bg-muted text-foreground" : "text-muted-foreground")}
+            className={cn("shrink-0", active ? "bg-muted text-foreground" : "text-muted-foreground")}
           >
-            <Link href={href} aria-current={active ? "page" : undefined}>
+            <Link href={href} ref={active ? current : undefined} aria-current={active ? "page" : undefined}>
               {label}
             </Link>
           </Button>

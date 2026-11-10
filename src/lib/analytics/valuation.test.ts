@@ -111,6 +111,20 @@ describe("buildValuation", () => {
     expect(v.attribution).toMatchObject({ price: 0, driver: "fundamental" })
   })
 
+  it("starts on a given date instead of the range's start", () => {
+    const v = buildValuation(
+      {
+        price: daily("2025-09-01", "2026-10-09", (time) => (time < "2026-07-01" ? 2000 : 1500)),
+        fundamental: [p("2025-06-30", 1000)],
+        fx: null,
+      },
+      { range: "5Y", start: "2026-06-15", today: TODAY },
+    )!
+    expect(v.start).toBe("2026-06-15")
+    expect(v.limitedBy).toBeNull()
+    expect(v.attribution).toMatchObject({ price: -0.25, fundamental: 0, driver: "price" })
+  })
+
   it("starts at the first balance sheet when the range reaches further back", () => {
     const v = buildValuation(
       { price: daily("2020-01-01", "2026-10-09", () => 500), fundamental: [p("2022-12-31", 400), p("2025-12-31", 450)], fx: null },

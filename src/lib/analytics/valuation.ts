@@ -121,10 +121,14 @@ const totalChange = (levels: PricePoint[]) => levels[levels.length - 1].value / 
 
 /**
  * Lines price, the fundamental and their ratio up on the trading days of a
- * range. Returns null when there is nothing to compare: no report with a
- * positive figure, or under two trading days since.
+ * range, or from `start` (YYYY-MM-DD) when given. Returns null when there is
+ * nothing to compare: no report with a positive figure, or under two trading
+ * days since.
  */
-export function buildValuation(input: ValuationInput, options: { range: RangeKey; today?: Date }): Valuation | null {
+export function buildValuation(
+  input: ValuationInput,
+  options: { range: RangeKey; start?: string; today?: Date },
+): Valuation | null {
   // A ratio over zero or less means nothing, and neither does a percent
   // change from it, so start after the last such report.
   const firstPositive = input.fundamental.findLastIndex((p) => !(p.value > 0)) + 1
@@ -136,7 +140,7 @@ export function buildValuation(input: ValuationInput, options: { range: RangeKey
     input.fx,
   )
 
-  const requestedStart = rangeStart(options.range, options.today)
+  const requestedStart = options.start ?? rangeStart(options.range, options.today)
   const fundamental = requestedStart ? clipFrom(fundamentalAll, requestedStart) : fundamentalAll
   if (fundamental.length < 2) return null
   const start = fundamental[0].time
